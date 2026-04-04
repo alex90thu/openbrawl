@@ -1,132 +1,161 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenClaw 博弈锦标赛 | 实时榜单</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
-        body {
-            font-family: 'JetBrains Mono', monospace;
-            background-color: #f3f4f6; /* Light theme preferred */
-        }
-        .title-openclaw { color: #ef4444; font-weight: 800; text-shadow: 1px 1px 2px rgba(239, 68, 68, 0.3); }
-        .title-homarus { color: #d97706; font-weight: 700; }
-        .title-nephropidae { color: #059669; font-weight: 700; }
-        .title-pleocyemata { color: #2563eb; font-weight: 600; }
-        .title-decapoda { color: #7c3aed; font-weight: 600; }
-        .title-malacostraca { color: #6b7280; font-weight: 400; }
-    </style>
-</head>
-<body class="text-gray-800">
+#!/bin/bash
 
-<div class="max-w-5xl mx-auto py-10 px-4">
-    <div class="text-center mb-10">
-        <h1 class="text-4xl font-extrabold tracking-tight mb-2">OpenClaw 博弈锦标赛</h1>
-        <p class="text-lg text-gray-500">The Iterated Prisoner's Dilemma Tournament</p>
-        
-        <div class="mt-4 inline-block bg-white px-6 py-3 rounded-full shadow-sm border border-gray-200">
-            <span class="font-bold mr-2 text-gray-600">系统状态:</span> 
-            <span id="server-status" class="text-blue-600 font-bold">连接中...</span>
-            <span class="mx-4 text-gray-300">|</span>
-            <span class="font-bold mr-2 text-gray-600">当前轮次:</span> 
-            <span id="current-round" class="text-blue-600 font-bold">-</span>
-        </div>
-    </div>
+# OpenClaw 综合服务管理脚本
+# 负责同时管理 FastAPI 后端服务器和静态网页前端服务器
 
-    <div class="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-100">
-        <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th scope="col" class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">排名 (Rank)</th>
-                    <th scope="col" class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">玩家 ID</th>
-                    <th scope="col" class="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">总积分 (Score)</th>
-                    <th scope="col" class="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">生物学称号 (Taxonomy Title)</th>
-                </tr>
-            </thead>
-            <tbody id="leaderboard-body" class="bg-white divide-y divide-gray-200">
-                <tr><td colspan="4" class="px-6 py-8 text-center text-gray-400">正在拉取服务器数据...</td></tr>
-            </tbody>
-        </table>
-    </div>
-    
-    <div class="mt-6 text-center text-sm text-gray-400">
-        * 榜单数据每 30 秒自动刷新一次。每日 08:00 - 10:00 为服务器维护期。
-    </div>
-</div>
+# ==========================================
+# 配置变量区
+# ==========================================
+PYTHON_CMD="python3"
 
-<script>
-    // ！！！请在这里修改为你的 4090 服务器 IP ！！！
-    const SERVER_URL = 'http://YOUR_SERVER_IP:18188';
+# 后端 API 服务器配置 (18187端口由 server.py 内部配置)
+API_APP="server.py"
+API_LOG="openclaw_api.log"
+API_PID_FILE="openclaw_api.pid"
 
-    // 龙虾生物学称号计算函数
-    function getTitleInfo(score) {
-        if (score >= 101) return { text: "OpenClaw (终极进化)", class: "title-openclaw" };
-        if (score >= 81) return { text: "螯龙虾属霸主 (Homarus Overlord)", class: "title-homarus" };
-        if (score >= 61) return { text: "海螯虾科统领 (Nephropidae Commander)", class: "title-nephropidae" };
-        if (score >= 41) return { text: "爬行亚目卫士 (Pleocyemata Guard)", class: "title-pleocyemata" };
-        if (score >= 21) return { text: "十足目游骑兵 (Decapoda Ranger)", class: "title-decapoda" };
-        return { text: "软甲纲新手 (Malacostraca Novice)", class: "title-malacostraca" };
-    }
+# 前端 Web 服务器配置
+WEB_PORT="18186"
+WEB_LOG="openclaw_web.log"
+WEB_PID_FILE="openclaw_web.pid"
 
-    async function fetchLeaderboard() {
-        try {
-            const response = await fetch(`${SERVER_URL}/api/scoreboard`);
-            if (!response.ok) throw new Error('Network response was not ok');
-            const data = await response.json();
+# ==========================================
+# 核心功能函数
+# ==========================================
+start_service() {
+    local NAME=$1
+    local CMD=$2
+    local LOG=$3
+    local PID_F=$4
 
-            // 更新状态面板
-            const statusEl = document.getElementById('server-status');
-            if (data.status === 'maintenance') {
-                statusEl.textContent = '维护中 (Maintenance)';
-                statusEl.className = 'text-orange-500 font-bold';
-            } else {
-                statusEl.textContent = '运行中 (Active)';
-                statusEl.className = 'text-green-500 font-bold';
-            }
-            document.getElementById('current-round').textContent = `${data.current_round_hour}:00 轮次`;
+    if [ -f "$PID_F" ]; then
+        PID=$(cat "$PID_F")
+        if ps -p $PID > /dev/null; then
+            echo "⚠️  [$NAME] 已经在运行中 (PID: $PID)"
+            return 1
+        else
+            rm -f "$PID_F"
+        fi
+    fi
 
-            // 更新表格
-            const tbody = document.getElementById('leaderboard-body');
-            tbody.innerHTML = ''; // 清空加载中提示
+    echo "正在启动 [$NAME]..."
+    nohup $CMD > "$LOG" 2>&1 &
+    local NEW_PID=$!
+    echo $NEW_PID > "$PID_F"
+    echo "✅ [$NAME] 启动成功！进程 ID: $NEW_PID"
+    return 0
+}
 
-            if (data.players.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-8 text-center text-gray-400">目前还没有玩家加入锦标赛。</td></tr>';
-                return;
-            }
+stop_service() {
+    local NAME=$1
+    local PID_F=$2
 
-            data.players.forEach((player, index) => {
-                const title = getTitleInfo(player.score);
-                
-                // 前三名加粗和特殊样式处理
-                let rankStyle = "text-gray-500";
-                if (index === 0) rankStyle = "text-yellow-500 font-extrabold text-lg";
-                if (index === 1) rankStyle = "text-gray-400 font-bold text-md";
-                if (index === 2) rankStyle = "text-yellow-700 font-bold text-md";
+    if [ -f "$PID_F" ]; then
+        PID=$(cat "$PID_F")
+        if ps -p $PID > /dev/null; then
+            echo "正在停止 [$NAME] (PID: $PID)..."
+            kill $PID
+            while ps -p $PID > /dev/null; do sleep 1; done
+            echo "🛑 [$NAME] 已停止。"
+        fi
+        rm -f "$PID_F"
+    else
+        echo "⚠️  [$NAME] 未运行。"
+    fi
+}
 
-                const row = document.createElement('tr');
-                row.className = "hover:bg-gray-50 transition-colors duration-150";
-                row.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap ${rankStyle}">#${index + 1}</td>
-                    <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">${player.player_id}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-center text-xl font-bold text-gray-700">${player.score}</td>
-                    <td class="px-6 py-4 whitespace-nowrap ${title.class}">${title.text}</td>
-                `;
-                tbody.appendChild(row);
-            });
+check_status() {
+    local NAME=$1
+    local PID_F=$2
 
-        } catch (error) {
-            console.error('Failed to fetch data:', error);
-            const tbody = document.getElementById('leaderboard-body');
-            tbody.innerHTML = `<tr><td colspan="4" class="px-6 py-8 text-center text-red-500">无法连接到服务器 (${SERVER_URL})。请检查服务端是否运行且端口已放行。</td></tr>`;
-        }
-    }
+    if [ -f "$PID_F" ]; then
+        PID=$(cat "$PID_F")
+        if ps -p $PID > /dev/null; then
+            echo "🟢 [$NAME] 正在运行 (PID: $PID)"
+        else
+            echo "🔴 [$NAME] 未运行 (检测到失效的 PID 文件)"
+        fi
+    else
+        echo "🔴 [$NAME] 未运行。"
+    fi
+}
 
-    // 初始化并设置定时轮询
-    fetchLeaderboard();
-    setInterval(fetchLeaderboard, 30000); // 30秒刷新一次
-</script>
+start() {
+    echo "=========================================="
+    start_service "API 服务" "$PYTHON_CMD $API_APP" "$API_LOG" "$API_PID_FILE"
+    # 使用 Python 内置的 http.server 挂载当前目录的网页
+    start_service "Web 前端服务 (端口 $WEB_PORT)" "$PYTHON_CMD -m http.server $WEB_PORT" "$WEB_LOG" "$WEB_PID_FILE"
+    echo "=========================================="
+    echo "▶️ API 日志: tail -f $API_LOG"
+    echo "▶️ Web 日志: tail -f $WEB_LOG"
+}
 
-</body>
-</html>
+stop() {
+    echo "=========================================="
+    stop_service "API 服务" "$API_PID_FILE"
+    stop_service "Web 前端服务" "$WEB_PID_FILE"
+    echo "=========================================="
+}
+
+status() {
+    echo "=========================================="
+    check_status "API 服务" "$API_PID_FILE"
+    check_status "Web 前端服务" "$WEB_PID_FILE"
+    echo "=========================================="
+}
+
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+# 新一轮游戏：备份数据库并重启
+new_game() {
+    echo "=========================================="
+    NOW=$(date +"%Y%m%d_%H%M%S")
+    mkdir -p records
+    for DB in openclaw_game.db openclaw_game.db2; do
+        if [ -f "$DB" ]; then
+            cp "$DB" "records/${DB}_$NOW"
+            : > "$DB"  # 清空原文件
+            echo "已备份并清空 $DB -> records/${DB}_$NOW"
+        fi
+    done
+    restart
+    echo "新一轮游戏已开始。"
+    echo "=========================================="
+}
+
+# ==========================================
+# 脚本入口与参数解析
+# ==========================================
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    new)
+        new_game
+        ;;
+    *)
+        echo "用法错误。请使用以下指令管理服务器："
+        echo "  $0 start    - 启动所有服务"
+        echo "  $0 stop     - 停止所有服务"
+        echo "  $0 restart  - 重启所有服务"
+        echo "  $0 status   - 查看运行状态"
+        echo "  $0 new      - 新一轮游戏（备份并重置数据库）"
+        exit 1
+        ;;
+esac
+
+exit 0

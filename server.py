@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 app = FastAPI(title="OpenClaw Prisoner's Dilemma API Server")
 
-# 允许跨域请求，以便前端网页可以直接调用 API
+# 允许跨域请求
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,9 +28,11 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
+    # 新增了 nickname 字段
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS players (
             player_id TEXT PRIMARY KEY,
+            nickname TEXT,
             secret_token TEXT,
             total_score INTEGER DEFAULT 0,
             registered_at TEXT
@@ -70,6 +72,12 @@ def get_db_connection():
 
 init_db()
 
+# ==========================================
+# 数据模型定义
+# ==========================================
+class RegisterRequest(BaseModel):
+    nickname: str
+
 class ActionSubmit(BaseModel):
     action: str
 
@@ -87,22 +95,26 @@ def get_current_round_info(now: datetime) -> dict:
 # API 路由
 # ==========================================
 @app.post("/register")
-def register_player():
+def register_player(req: RegisterRequest):
     new_player_id = f"OC-{uuid.uuid4().hex[:8]}"
     new_secret_token = secrets.token_hex(16)
     register_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # 限制昵称长度，防止恶意注入长文本
+    safe_nickname = req.nickname[:20] 
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO players (player_id, secret_token, total_score, registered_at) 
-        VALUES (?, ?, 0, ?)
-    ''', (new_player_id, new_secret_token, register_time))
+        INSERT INTO players (player_id, nickname, secret_token, total_score, registered_at) 
+        VALUES (?, ?, ?, 0, ?)
+    ''', (new_player_id, safe_nickname, new_secret_token, register_time))
     conn.commit()
     conn.close()
     
     return {
         "player_id": new_player_id, 
+        "nickname": safe_nickname,
         "secret_token": new_secret_token,
         "message": "Registration successful. Please save your credentials safely."
     }
@@ -144,8 +156,10 @@ def get_match_info(player_id: str, secret_token: str = Header(...)):
         
     opponent_id = match_row["player2_id"] if match_row["player1_id"] == player_id else match_row["player1_id"]
     
-    cursor.execute("SELECT total_score FROM players WHERE player_id = ?", (opponent_id,))
+    # 提取对手的昵称和分数
+    cursor.execute("SELECT nickname, total_score FROM players WHERE player_id = ?", (opponent_id,))
     opponent_row = cursor.fetchone()
+    opponent_nickname = opponent_row["nickname"] if opponent_row else "Unknown"
     opponent_score = opponent_row["total_score"] if opponent_row else 0
     
     cursor.execute('''
@@ -164,7 +178,7 @@ def get_match_info(player_id: str, secret_token: str = Header(...)):
     
     return {
         "round_hour": round_info["hour"],
-        "opponent_id": opponent_id,
+        "opponent_nickname": opponent_nickname,
         "opponent_score": opponent_score,
         "opponent_history": history_actions
     }
@@ -176,7 +190,7 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
         raise HTTPException(status_code=403, detail="Server is in maintenance mode.")
         
     if now.minute >= 30:
-        raise HTTPException(status_code=403, detail="Submission window closed. You can only submit between XX:00 and XX:30.")
+        raise HTTPException(status_code=403, detail="Submission window closed.")
         
     if req.action not in ['C', 'D']:
         raise HTTPException(status_code=400, detail="Action must be 'C' or 'D'")
@@ -237,18 +251,19 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
 def get_leaderboard():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT player_id, total_score FROM players ORDER BY total_score DESC LIMIT 10")
-    top_players = [{"player_id": r["player_id"], "score": r["total_score"]} for r in cursor.fetchall()]
+    # 这里用 nickname 替换了 player_id
+    cursor.execute("SELECT nickname, total_score FROM players ORDER BY total_score DESC LIMIT 10")
+    top_players = [{"nickname": r["nickname"], "score": r["total_score"]} for r in cursor.fetchall()]
     conn.close()
     return {"top_10": top_players}
 
 @app.get("/api/scoreboard")
 def get_full_scoreboard():
-    """提供给前端的完整计分板数据"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT player_id, total_score, registered_at FROM players ORDER BY total_score DESC")
-    all_players = [{"player_id": r["player_id"], "score": r["total_score"]} for r in cursor.fetchall()]
+    # 前端全量数据同样只暴露 nickname
+    cursor.execute("SELECT nickname, total_score, registered_at FROM players ORDER BY total_score DESC")
+    all_players = [{"nickname": r["nickname"], "score": r["total_score"]} for r in cursor.fetchall()]
     
     now = datetime.now()
     round_info = get_current_round_info(now)
@@ -292,15 +307,19 @@ async def background_scheduler():
                     if p1_action == 'C' and p2_action == 'C':
                         p1_score, p2_score = 3, 3
                     elif p1_action == 'D' and p2_action == 'C':
-                        p1_score, p2_score = 5, 0
+                        p1_score, p2_score = 8, -3
                     elif p1_action == 'C' and p2_action == 'D':
-                        p1_score, p2_score = 0, 5
+                        p1_score, p2_score = -3, 8
                     elif p1_action == 'D' and p2_action == 'D':
-                        p1_score, p2_score = 1, 1
+                        p1_score, p2_score = -1, -1
                     elif p1_action is None and p2_action is not None:
-                        p2_score = 5 if p2_action == 'D' else 3
+                        p1_score = -5 
+                        p2_score = 8 if p2_action == 'D' else 3
                     elif p2_action is None and p1_action is not None:
-                        p1_score = 5 if p1_action == 'D' else 3
+                        p2_score = -5 
+                        p1_score = 8 if p1_action == 'D' else 3
+                    elif p1_action is None and p2_action is None:
+                        p1_score, p2_score = -5, -5
                     
                     cursor.execute('''
                         UPDATE matches SET player1_score = ?, player2_score = ? WHERE match_id = ?
@@ -363,4 +382,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=18188)
+    uvicorn.run(app, host="0.0.0.0", port=18187)
