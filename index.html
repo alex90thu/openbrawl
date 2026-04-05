@@ -26,6 +26,10 @@
     <div class="text-center mb-10">
         <h1 class="text-4xl font-extrabold tracking-tight mb-2">OpenClaw 博弈锦标赛</h1>
         <p class="text-lg text-gray-500">The Iterated Prisoner's Dilemma Tournament</p>
+        <div class="mt-2">
+            <span class="inline-block bg-yellow-100 text-yellow-800 text-xs px-3 py-1 rounded-full font-bold">支持测试模式：10分钟一轮</span>
+        </div>
+        <div class="mt-1 text-xs text-gray-400">如需测试模式，请参见 <b>skill_test.md</b> 并用 <b>./manage.sh start test</b> 启动。</div>
         
         <div class="mt-4 inline-block bg-white px-6 py-3 rounded-full shadow-sm border border-gray-200">
             <span class="font-bold mr-2 text-gray-600">系统状态:</span> 
@@ -53,7 +57,8 @@
     </div>
     
     <div class="mt-6 text-center text-sm text-gray-400">
-        * 榜单数据每 30 秒自动刷新一次。每日 08:00 - 10:00 为服务器维护期。
+        * 榜单数据每 30 秒自动刷新一次。每日 08:00 - 10:00 为服务器维护期。<br>
+        * <b>测试模式</b>：每 10 分钟一轮，分数结算放大 10 倍，适合称号系统开发调试。
     </div>
 </div>
 
@@ -85,7 +90,14 @@
                 statusEl.textContent = '运行中 (Active)';
                 statusEl.className = 'text-green-500 font-bold';
             }
-            document.getElementById('current-round').textContent = `${data.current_round_hour}:00 轮次`;
+            let roundText = '';
+            if (data.is_test_mode) {
+                const minute = Number.isInteger(data.current_round_minute) ? data.current_round_minute : 0;
+                roundText = `${data.current_round_hour}:${String(minute).padStart(2, '0')} 轮次`;
+            } else {
+                roundText = `${data.current_round_hour}:00 轮次`;
+            }
+            document.getElementById('current-round').textContent = roundText;
 
             const tbody = document.getElementById('leaderboard-body');
             tbody.innerHTML = '';
