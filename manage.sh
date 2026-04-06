@@ -3,13 +3,23 @@
 # OpenClaw 综合服务管理脚本
 # 负责同时管理 FastAPI 后端服务器和静态网页前端服务器
 
+if [ -f ".ENV" ]; then
+    set -a
+    . ./.ENV
+    set +a
+elif [ -f ".env" ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
 # ==========================================
 # 配置变量区
 # ==========================================
-PYTHON_CMD="python3"
+PYTHON_CMD="${OPENCLAW_PYTHON_CMD:-python3}"
 
 
-# 后端 API 服务器配置 (18187端口由 server.py 内部配置)
+# 后端 API 服务器配置
 API_APP="server.py"
 API_LOG="log/openclaw_api.log"
 API_PID_FILE="log/openclaw_api.pid"
@@ -20,9 +30,30 @@ API_LOG_TEST="log/openclaw_api_test.log"
 API_PID_FILE_TEST="log/openclaw_api_test.pid"
 
 # 前端 Web 服务器配置
-WEB_PORT="18186"
+WEB_PORT="${OPENCLAW_WEB_PORT}"
 WEB_LOG="log/openclaw_web.log"
 WEB_PID_FILE="log/openclaw_web.pid"
+
+API_PORT="${OPENCLAW_API_PORT}"
+API_SCHEME="${OPENCLAW_API_SCHEME:-http}"
+API_HOST_PUBLIC="${OPENCLAW_API_PUBLIC_HOST:-127.0.0.1}"
+PUBLIC_API_URL="${OPENCLAW_PUBLIC_API_URL:-${API_SCHEME}://${API_HOST_PUBLIC}:${API_PORT}}"
+RUNTIME_CONFIG_FILE="runtime.config.js"
+
+if [ -z "$API_PORT" ] || [ -z "$WEB_PORT" ]; then
+    echo "❌ OPENCLAW_API_PORT / OPENCLAW_WEB_PORT 未配置，请在 .ENV 中设置后重试。"
+    exit 1
+fi
+
+generate_runtime_config() {
+        cat > "$RUNTIME_CONFIG_FILE" <<EOF
+window.OPENCLAW_RUNTIME_CONFIG = {
+    serverUrl: "$PUBLIC_API_URL",
+    apiPort: "$API_PORT"
+};
+EOF
+        echo "已生成前端运行时配置: $RUNTIME_CONFIG_FILE (serverUrl=$PUBLIC_API_URL)"
+}
 
 # ==========================================
 # 核心功能函数
@@ -85,6 +116,182 @@ check_status() {
     fi
 }
 
+port_in_use() {
+    local PORT=$1
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn "sport = :$PORT" | awk 'NR>1 {found=1} END {exit found ? 0 : 1}'
+        return $?
+    fi
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
+        return $?
+    fi
+
+    return 2
+}
+
+doctor() {
+    echo "=========================================="
+    echo "🩺 OpenClaw 环境自检"
+    echo "------------------------------------------"
+
+    local failed=0
+    local warning=0
+
+    local required_vars=(
+        OPENCLAW_API_HOST
+        OPENCLAW_API_PORT
+        OPENCLAW_API_SCHEME
+        OPENCLAW_API_PUBLIC_HOST
+        OPENCLAW_PUBLIC_API_URL
+        OPENCLAW_WEB_PORT
+        OPENCLAW_PYTHON_CMD
+        OPENCLAW_DB_FILE
+        OPENCLAW_DB_FILE_TEST
+        OPENCLAW_BROADCAST_FILE
+        OPENCLAW_AUTO_KICK_MISS_STREAK
+        OPENCLAW_FINGERPRINT_BAN_HOURS
+        OPENCLAW_RECENT_ROUND_WINDOW
+        OPENCLAW_LOW_SCORE_THRESHOLD
+        OPENCLAW_PAIR_RECENT_PENALTY_WEIGHT
+        OPENCLAW_PAIR_SCORE_DIFF_WEIGHT
+        OPENCLAW_PAIR_LOW_SCORE_BIAS
+        OPENCLAW_PAIR_JITTER_MAX
+    )
+
+    echo "【环境变量】"
+    for var_name in "${required_vars[@]}"; do
+        local var_value="${!var_name}"
+        if [ -n "$var_value" ]; then
+            echo "✅ $var_name=$var_value"
+        else
+            echo "❌ $var_name 未设置"
+            failed=1
+        fi
+    done
+
+    echo "------------------------------------------"
+    echo "【关键文件】"
+    local required_files=(
+        server.py
+        index.html
+        manage.sh
+        skill.md
+        skill_test.md
+        scripts/fingerprint.py
+        assets/bg/bg.webp
+        assets/font/Marcellus.ttf
+        assets/font/Cinzel/Cinzel-Bold-2.otf
+        assets/font/Cinzel/Cinzel-Regular-3.otf
+        assets/font/noto-serif-sc/NotoSerifSC-Regular.otf
+        assets/font/noto-serif-sc/NotoSerifSC-Medium.otf
+        assets/font/noto-serif-sc/NotoSerifSC-SemiBold.otf
+        assets/font/noto-serif-sc/NotoSerifSC-Bold.otf
+    )
+
+    for file_path in "${required_files[@]}"; do
+        if [ -e "$file_path" ]; then
+            echo "✅ $file_path"
+        else
+            echo "⚠️  $file_path 不存在"
+        fi
+    done
+
+    echo "------------------------------------------"
+    echo "【运行时配置】"
+    if [ -f "$RUNTIME_CONFIG_FILE" ]; then
+        echo "✅ $RUNTIME_CONFIG_FILE 已存在"
+        if grep -q "serverUrl" "$RUNTIME_CONFIG_FILE"; then
+            echo "✅ $RUNTIME_CONFIG_FILE 包含 serverUrl"
+        else
+            echo "❌ $RUNTIME_CONFIG_FILE 缺少 serverUrl 字段"
+            failed=1
+        fi
+    else
+        echo "❌ $RUNTIME_CONFIG_FILE 不存在，前端将回退到错误地址"
+        echo "   修复：执行 ./manage.sh genconfig 或 ./manage.sh start"
+        failed=1
+    fi
+
+    echo "------------------------------------------"
+    echo "【HTTP 连通性】"
+    if curl -fsS -m 5 "http://127.0.0.1:${API_PORT}/health" >/dev/null 2>&1; then
+        echo "✅ 本机 Health 可访问: http://127.0.0.1:${API_PORT}/health"
+    else
+        echo "❌ 本机 Health 不可访问: http://127.0.0.1:${API_PORT}/health"
+        failed=1
+    fi
+
+    if curl -fsS -m 5 "$PUBLIC_API_URL/api/scoreboard" >/dev/null 2>&1; then
+        echo "✅ PUBLIC_API_URL 可访问: $PUBLIC_API_URL/api/scoreboard"
+    else
+        echo "⚠️  PUBLIC_API_URL 不可访问: $PUBLIC_API_URL/api/scoreboard"
+        warning=1
+    fi
+
+    if curl -fsS -m 5 "http://127.0.0.1:${API_PORT}/api/scoreboard" >/dev/null 2>&1; then
+        echo "✅ 本机 API 可访问: http://127.0.0.1:${API_PORT}/api/scoreboard"
+    else
+        echo "❌ 本机 API 不可访问: http://127.0.0.1:${API_PORT}/api/scoreboard"
+        failed=1
+    fi
+
+    if curl -fsS -m 5 "http://127.0.0.1:${WEB_PORT}/runtime.config.js" >/dev/null 2>&1; then
+        echo "✅ Web 可提供 runtime.config.js"
+    else
+        echo "❌ Web 无法提供 runtime.config.js（通常是文件缺失）"
+        failed=1
+    fi
+
+    echo "------------------------------------------"
+    echo "【端口检查】"
+    if port_in_use "$API_PORT"; then
+        echo "✅ API 端口 $API_PORT 正在监听或被占用"
+    else
+        local port_check_status=$?
+        if [ "$port_check_status" -eq 1 ]; then
+            echo "⚠️  API 端口 $API_PORT 当前未监听"
+        else
+            echo "⚠️  无法检测 API 端口 $API_PORT（缺少 ss/lsof）"
+        fi
+    fi
+
+    if port_in_use "$WEB_PORT"; then
+        echo "✅ WEB 端口 $WEB_PORT 正在监听或被占用"
+    else
+        local port_check_status=$?
+        if [ "$port_check_status" -eq 1 ]; then
+            echo "⚠️  WEB 端口 $WEB_PORT 当前未监听"
+        else
+            echo "⚠️  无法检测 WEB 端口 $WEB_PORT（缺少 ss/lsof）"
+        fi
+    fi
+
+    echo "------------------------------------------"
+    echo "【状态文件】"
+    check_status "API 服务" "$API_PID_FILE"
+    check_status "API 测试服务" "$API_PID_FILE_TEST"
+    check_status "Web 前端服务" "$WEB_PID_FILE"
+
+    echo "------------------------------------------"
+    if [ "$failed" -eq 0 ] && [ "$warning" -eq 0 ]; then
+        echo "✅ 自检完成：基础环境变量已配置。"
+        echo "=========================================="
+        return 0
+    fi
+
+    if [ "$failed" -eq 0 ] && [ "$warning" -ne 0 ]; then
+        echo "⚠️  自检完成：有告警项，请按提示核查网络/公网配置。"
+        echo "=========================================="
+        return 0
+    fi
+
+    echo "❌ 自检完成：存在缺失项，请先修复后再启动。"
+    echo "=========================================="
+    return 1
+}
+
 tidy_files() {
     echo "=========================================="
     mkdir -p data log scripts data/records
@@ -122,6 +329,7 @@ tidy_files() {
 
 start() {
     echo "=========================================="
+    generate_runtime_config
     if [ "$1" = "test" ]; then
         start_service "API 测试服务" "$PYTHON_CMD $API_APP_TEST" "$API_LOG_TEST" "$API_PID_FILE_TEST"
         echo "▶️ [测试模式] API 日志: tail -f $API_LOG_TEST"
@@ -325,6 +533,77 @@ round_stats() {
     echo "=========================================="
 }
 
+sql_escape() {
+    local RAW="$1"
+    echo "${RAW//\'/\'\'}"
+}
+
+kick_player() {
+    local TARGET="$1"
+    local MODE="$2"
+    local DB_FILE="data/openclaw_game.db"
+    if [ "$MODE" = "test" ]; then
+        DB_FILE="data/openclaw_game.db2"
+    fi
+
+    if [ -z "$TARGET" ]; then
+        echo "用法: $0 kick <player_id|nickname> [test]"
+        return 1
+    fi
+
+    if [ ! -f "$DB_FILE" ]; then
+        echo "❌ 数据库不存在: $DB_FILE"
+        return 1
+    fi
+
+    local SAFE_TARGET
+    SAFE_TARGET=$(sql_escape "$TARGET")
+
+    local PLAYER_ID
+    if [[ "$TARGET" =~ ^OC-[A-Za-z0-9]+$ ]]; then
+        PLAYER_ID=$(sqlite3 "$DB_FILE" "SELECT player_id FROM players WHERE player_id = '$SAFE_TARGET' LIMIT 1;")
+    else
+        PLAYER_ID=$(sqlite3 "$DB_FILE" "SELECT player_id FROM players WHERE nickname = '$SAFE_TARGET' ORDER BY registered_at ASC LIMIT 1;")
+    fi
+
+    if [ -z "$PLAYER_ID" ]; then
+        echo "❌ 未找到玩家: $TARGET"
+        return 1
+    fi
+
+    local SAFE_PID
+    SAFE_PID=$(sql_escape "$PLAYER_ID")
+
+    local PLAYER_ROW
+    PLAYER_ROW=$(sqlite3 -separator '|' "$DB_FILE" "SELECT player_id, nickname, total_score FROM players WHERE player_id = '$SAFE_PID' LIMIT 1;")
+    local MATCH_COUNT
+    MATCH_COUNT=$(sqlite3 "$DB_FILE" "SELECT COUNT(1) FROM matches WHERE player1_id = '$SAFE_PID' OR player2_id = '$SAFE_PID';")
+
+    echo "=========================================="
+    echo "⚠️  即将踢出玩家: $PLAYER_ROW"
+    echo "📊 将删除关联对局数量: $MATCH_COUNT"
+    echo "📁 数据库: $DB_FILE"
+
+    sqlite3 "$DB_FILE" "BEGIN;
+        DELETE FROM round_speeches WHERE speaker_player_id = '$SAFE_PID';
+        DELETE FROM round_special_roles WHERE speaker_player_id = '$SAFE_PID';
+        DELETE FROM matches WHERE player1_id = '$SAFE_PID' OR player2_id = '$SAFE_PID';
+        DELETE FROM players WHERE player_id = '$SAFE_PID';
+    COMMIT;"
+
+    local STILL_EXISTS
+    STILL_EXISTS=$(sqlite3 "$DB_FILE" "SELECT COUNT(1) FROM players WHERE player_id = '$SAFE_PID';")
+    if [ "$STILL_EXISTS" = "0" ]; then
+        echo "✅ 玩家已踢出: $PLAYER_ID"
+        echo "=========================================="
+        return 0
+    fi
+
+    echo "❌ 踢人失败，请检查数据库锁或权限。"
+    echo "=========================================="
+    return 1
+}
+
 # ==========================================
 # 脚本入口与参数解析
 # ==========================================
@@ -357,11 +636,28 @@ case "$1" in
     tidy)
         tidy_files
         ;;
+    genconfig)
+        generate_runtime_config
+        ;;
+    doctor)
+        doctor
+        ;;
     roundstats)
         if [ "$2" = "test" ]; then
             round_stats test "$3"
         else
             round_stats "" "$2"
+        fi
+        ;;
+    kick)
+        if [ "$3" = "test" ] || [ "$2" = "test" ]; then
+            if [ "$2" = "test" ]; then
+                echo "用法: $0 kick <player_id|nickname> [test]"
+                exit 1
+            fi
+            kick_player "$2" test
+        else
+            kick_player "$2"
         fi
         ;;
 
@@ -380,7 +676,10 @@ case "$1" in
         echo "  $0 status          - 查看运行状态"
         echo "  $0 new             - 新一轮游戏（备份并重置数据库）"
         echo "  $0 tidy            - 一键迁移根目录遗留文件到 data/log/scripts"
+        echo "  $0 genconfig       - 按 .ENV 生成 runtime.config.js"
+        echo "  $0 doctor          - 检查 .ENV、关键文件、端口和运行状态"
         echo "  $0 roundstats [test] [player_id] - 打印本轮+历史动作统计；可附带玩家ID查看该玩家全历史动作"
+        echo "  $0 kick <player_id|nickname> [test] - 手动踢出玩家并删除关联对局"
         echo "  $0 broadcast <type> <content> - 发送服务器广播包"
         exit 1
         ;;
