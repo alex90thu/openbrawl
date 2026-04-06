@@ -1,42 +1,38 @@
-
-import sqlite3
-import random
 import asyncio
-import uuid
+import json
+import logging
+import os
 import secrets
 import sys
-import json
-import os
-import logging
-from typing import Optional
+import uuid
 from datetime import datetime, timedelta
-from collections import defaultdict
+
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
-
-def load_local_env():
-    for env_path in (".ENV", ".env"):
-        if not os.path.exists(env_path):
-            continue
-        try:
-            with open(env_path, "r", encoding="utf-8") as env_file:
-                for raw_line in env_file:
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key and key not in os.environ:
-                        os.environ[key] = value
-        except Exception:
-            pass
-
-
-load_local_env()
+from scripts.achievements import get_player_achievements, list_achievement_catalog, process_feature_event
+from scripts.db_helpers import (
+    apply_submission_streak_and_auto_kick,
+    assign_special_speaker,
+    enforce_player_identity,
+    ensure_fingerprint_not_banned,
+    get_current_round_info,
+    get_db_connection,
+    get_round_speeches,
+    get_speech_window_meta,
+    init_db,
+    is_maintenance_time,
+    is_speech_window_open,
+    load_server_message,
+    normalize_fingerprint,
+    normalize_nickname,
+    submit_chaos_speech,
+)
+from scripts.features import FeatureEvent
+from scripts.matchmaking import create_round_matches_if_needed, ensure_round_exists, try_pair_unmatched_players
+from scripts.models import ActionSubmit, FeatureEventRequest, NicknameUpdateRequest, RegisterRequest, SpeechSubmit
+from scripts.runtime import API_HOST, API_PORT, IS_TEST_MODE, SPEECH_DEADLINE_MINUTE
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("OPENCLAW_LOG_LEVEL", "INFO").upper(), logging.INFO),
@@ -44,9 +40,8 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger("openclaw.server")
 
-app = FastAPI(title="OpenClaw Prisoner's Dilemma API Server")
+app = FastAPI(title="OpenBrawl Prisoner's Dilemma API Server")
 
-# 允许跨域请求
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,33 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# 检查是否为测试模式
-IS_TEST_MODE = '--test' in sys.argv
-
-DB_FILE = (
-    os.getenv("OPENCLAW_DB_FILE_TEST", "data/openclaw_game.db2")
-    if IS_TEST_MODE
-    else os.getenv("OPENCLAW_DB_FILE", "data/openclaw_game.db")
-)
-BROADCAST_FILE = os.getenv("OPENCLAW_BROADCAST_FILE", "data/broadcast.json")
-API_HOST = os.getenv("OPENCLAW_API_HOST", "0.0.0.0")
-API_PORT_RAW = os.getenv("OPENCLAW_API_PORT")
-if not API_PORT_RAW:
-    raise RuntimeError("OPENCLAW_API_PORT is required. Please set it in .ENV.")
-API_PORT = int(API_PORT_RAW)
-AUTO_KICK_MISS_STREAK = int(os.getenv("OPENCLAW_AUTO_KICK_MISS_STREAK", "3"))
-FINGERPRINT_BAN_HOURS = int(os.getenv("OPENCLAW_FINGERPRINT_BAN_HOURS", "24"))
-RECENT_ROUND_WINDOW = int(os.getenv("OPENCLAW_RECENT_ROUND_WINDOW", "6"))
-LOW_SCORE_THRESHOLD = int(os.getenv("OPENCLAW_LOW_SCORE_THRESHOLD", "-500"))
-PAIR_RECENT_PENALTY_WEIGHT = int(os.getenv("OPENCLAW_PAIR_RECENT_PENALTY_WEIGHT", "1000"))
-PAIR_SCORE_DIFF_WEIGHT = int(os.getenv("OPENCLAW_PAIR_SCORE_DIFF_WEIGHT", "1"))
-PAIR_LOW_SCORE_BIAS = int(os.getenv("OPENCLAW_PAIR_LOW_SCORE_BIAS", "160"))
-PAIR_JITTER_MAX = float(os.getenv("OPENCLAW_PAIR_JITTER_MAX", "5"))
-SPEECH_RETRY_INTERVAL_MINUTES = int(os.getenv("OPENCLAW_SPEECH_RETRY_INTERVAL_MINUTES", "10"))
-SPEECH_DEADLINE_MINUTE = int(os.getenv("OPENCLAW_SPEECH_DEADLINE_MINUTE", "30"))
-TEST_SPEECH_DEADLINE_MINUTE_IN_SLOT = int(os.getenv("OPENCLAW_TEST_SPEECH_DEADLINE_MINUTE_IN_SLOT", "9"))
-
+init_db()
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
@@ -113,590 +82,6 @@ async def request_logging_middleware(request: Request, call_next):
     )
     response.headers["X-Request-ID"] = request_id
     return response
-
-# ==========================================
-# 数据库初始化与辅助函数
-# ==========================================
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    # 新增了 nickname 字段
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS players (
-            player_id TEXT PRIMARY KEY,
-            nickname TEXT,
-            secret_token TEXT,
-            fingerprint TEXT,
-            nickname_change_count INTEGER DEFAULT 0,
-            miss_submit_streak INTEGER DEFAULT 0,
-            total_score INTEGER DEFAULT 0,
-            registered_at TEXT
-        )
-    ''')
-
-    # 兼容旧库：补齐 players 表缺失列
-    cursor.execute("PRAGMA table_info(players)")
-    player_columns = [row[1] for row in cursor.fetchall()]
-    if "fingerprint" not in player_columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN fingerprint TEXT")
-    if "nickname_change_count" not in player_columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN nickname_change_count INTEGER DEFAULT 0")
-    if "miss_submit_streak" not in player_columns:
-        cursor.execute("ALTER TABLE players ADD COLUMN miss_submit_streak INTEGER DEFAULT 0")
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS rounds (
-            round_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_date TEXT,
-            hour INTEGER,
-            minute_slot INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'pending'
-        )
-    ''')
-
-    # 兼容旧库：若 rounds 表缺少 minute_slot 列则补齐
-    cursor.execute("PRAGMA table_info(rounds)")
-    round_columns = [row[1] for row in cursor.fetchall()]
-    if "minute_slot" not in round_columns:
-        cursor.execute("ALTER TABLE rounds ADD COLUMN minute_slot INTEGER DEFAULT 0")
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS matches (
-            match_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_id INTEGER,
-            player1_id TEXT,
-            player2_id TEXT,
-            player1_action TEXT,
-            player2_action TEXT,
-            player1_score INTEGER DEFAULT 0,
-            player2_score INTEGER DEFAULT 0,
-            p1_submit_time TEXT,
-            p2_submit_time TEXT
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS round_special_roles (
-            round_id INTEGER PRIMARY KEY,
-            speaker_player_id TEXT,
-            announced_at TEXT
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS round_speeches (
-            speech_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_id INTEGER,
-            speaker_player_id TEXT,
-            speech_as TEXT,
-            content TEXT,
-            created_at TEXT
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS fingerprint_bans (
-            fingerprint TEXT PRIMARY KEY,
-            banned_until TEXT,
-            reason TEXT,
-            created_at TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-init_db()
-
-# ==========================================
-# 数据模型定义
-# ==========================================
-class RegisterRequest(BaseModel):
-    nickname: str
-
-class ActionSubmit(BaseModel):
-    action: str
-    speech_as: Optional[str] = None
-    speech_content: Optional[str] = None
-
-
-class SpeechSubmit(BaseModel):
-    speech_as: Optional[str] = None
-    speech_content: str
-
-
-class NicknameUpdateRequest(BaseModel):
-    player_id: str
-    secret_token: str
-    new_nickname: str
-
-
-def normalize_nickname(raw_name: str) -> str:
-    safe_name = (raw_name or "").strip()[:20]
-    if not safe_name:
-        raise HTTPException(status_code=400, detail="Nickname is required and cannot be empty.")
-    return safe_name
-
-
-def normalize_fingerprint(raw_fingerprint: str) -> str:
-    safe_fp = (raw_fingerprint or "").strip()[:128]
-    if not safe_fp:
-        raise HTTPException(
-            status_code=400,
-            detail="x-openclaw-fingerprint is required. Each OpenClaw instance must use one stable fingerprint.",
-        )
-    return safe_fp
-
-
-def get_active_fingerprint_ban(cursor, fingerprint: str):
-    cursor.execute(
-        "SELECT banned_until, reason FROM fingerprint_bans WHERE fingerprint = ?",
-        (fingerprint,),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return None
-
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if row["banned_until"] and row["banned_until"] > now_str:
-        return row
-
-    # 封禁过期后自动清理
-    cursor.execute("DELETE FROM fingerprint_bans WHERE fingerprint = ?", (fingerprint,))
-    return None
-
-
-def ensure_fingerprint_not_banned(cursor, fingerprint: str):
-    ban_row = get_active_fingerprint_ban(cursor, fingerprint)
-    if not ban_row:
-        return
-
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            f"This fingerprint is temporarily banned until {ban_row['banned_until']} due to inactivity abuse. "
-            "Please retry later."
-        ),
-    )
-
-
-def auto_kick_and_ban_player(cursor, player_id: str, reason: str):
-    cursor.execute(
-        "SELECT player_id, nickname, fingerprint, miss_submit_streak FROM players WHERE player_id = ?",
-        (player_id,),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return False
-
-    fingerprint = row["fingerprint"]
-    now_dt = datetime.now()
-    if fingerprint:
-        banned_until = (now_dt + timedelta(hours=FINGERPRINT_BAN_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute(
-            """
-            INSERT INTO fingerprint_bans (fingerprint, banned_until, reason, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(fingerprint)
-            DO UPDATE SET
-                banned_until = excluded.banned_until,
-                reason = excluded.reason,
-                created_at = excluded.created_at
-            """,
-            (fingerprint, banned_until, reason, now_dt.strftime("%Y-%m-%d %H:%M:%S")),
-        )
-
-    cursor.execute("DELETE FROM round_speeches WHERE speaker_player_id = ?", (player_id,))
-    cursor.execute("DELETE FROM round_special_roles WHERE speaker_player_id = ?", (player_id,))
-    cursor.execute("DELETE FROM matches WHERE player1_id = ? OR player2_id = ?", (player_id, player_id))
-    cursor.execute("DELETE FROM players WHERE player_id = ?", (player_id,))
-
-    LOGGER.warning(
-        "Auto-kicked player_id=%s nickname=%s miss_streak=%s reason=%s",
-        row["player_id"],
-        row["nickname"],
-        row["miss_submit_streak"],
-        reason,
-    )
-    return True
-
-
-def apply_submission_streak_and_auto_kick(cursor, round_id: int):
-    cursor.execute("SELECT player1_id, player2_id, player1_action, player2_action FROM matches WHERE round_id = ?", (round_id,))
-    matches = cursor.fetchall()
-
-    for m in matches:
-        p1_id = m["player1_id"]
-        p2_id = m["player2_id"]
-
-        if p1_id != "BOT-SHADOW":
-            if m["player1_action"] is None:
-                cursor.execute(
-                    "UPDATE players SET miss_submit_streak = miss_submit_streak + 1 WHERE player_id = ?",
-                    (p1_id,),
-                )
-            else:
-                cursor.execute("UPDATE players SET miss_submit_streak = 0 WHERE player_id = ?", (p1_id,))
-
-        if p2_id != "BOT-SHADOW":
-            if m["player2_action"] is None:
-                cursor.execute(
-                    "UPDATE players SET miss_submit_streak = miss_submit_streak + 1 WHERE player_id = ?",
-                    (p2_id,),
-                )
-            else:
-                cursor.execute("UPDATE players SET miss_submit_streak = 0 WHERE player_id = ?", (p2_id,))
-
-    cursor.execute(
-        "SELECT player_id FROM players WHERE miss_submit_streak >= ?",
-        (AUTO_KICK_MISS_STREAK,),
-    )
-    to_kick = [r["player_id"] for r in cursor.fetchall()]
-    for pid in to_kick:
-        auto_kick_and_ban_player(
-            cursor,
-            pid,
-            f"Auto kick: {AUTO_KICK_MISS_STREAK} consecutive rounds without submission",
-        )
-
-
-def enforce_player_identity(cursor, player_id: str, secret_token: str, fingerprint: str):
-    # 先校验该实例指纹是否已经绑定到其他账号，防止同一实例多开多个账号
-    cursor.execute(
-        "SELECT player_id, secret_token FROM players WHERE fingerprint = ?",
-        (fingerprint,),
-    )
-    bound_account = cursor.fetchone()
-    if bound_account and (
-        bound_account["player_id"] != player_id or bound_account["secret_token"] != secret_token
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Fingerprint already bound to another account. Please use the server-issued player_id and secret_token; "
-                "otherwise this behavior is considered cheating."
-            ),
-        )
-
-    cursor.execute(
-        "SELECT * FROM players WHERE player_id = ? AND secret_token = ?",
-        (player_id, secret_token),
-    )
-    player_row = cursor.fetchone()
-    if not player_row:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid player_id or secret-token.")
-
-    stored_fingerprint = player_row["fingerprint"]
-    if stored_fingerprint and stored_fingerprint != fingerprint:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Fingerprint mismatch for this account. Please use the original player_id + secret_token pair assigned "
-                "to this OpenClaw instance."
-            ),
-        )
-
-    return player_row
-
-
-def assign_special_speaker(cursor, round_id: int):
-    cursor.execute("SELECT player_id FROM players")
-    candidates = [r["player_id"] for r in cursor.fetchall()]
-    if not candidates:
-        return
-
-    selected_player = random.choice(candidates)
-    cursor.execute(
-        "INSERT OR REPLACE INTO round_special_roles (round_id, speaker_player_id, announced_at) VALUES (?, ?, ?)",
-        (round_id, selected_player, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-    )
-
-
-def get_round_speeches(cursor, round_id: int):
-    cursor.execute(
-        "SELECT speech_as, content, created_at FROM round_speeches WHERE round_id = ? ORDER BY speech_id DESC LIMIT 10",
-        (round_id,),
-    )
-    rows = cursor.fetchall()
-    return [
-        {
-            "speech_as": r["speech_as"],
-            "content": r["content"],
-            "created_at": r["created_at"],
-        }
-        for r in rows
-    ]
-
-def is_maintenance_time(now: datetime) -> bool:
-    if IS_TEST_MODE:
-        return False
-    return 8 <= now.hour < 10
-
-def get_current_round_info(now: datetime) -> dict:
-    if now.hour < 8:
-        game_date = (now.replace(day=now.day - 1)).strftime("%Y-%m-%d")
-    else:
-        game_date = now.strftime("%Y-%m-%d")
-    minute_slot = now.minute // 10 if IS_TEST_MODE else 0
-    return {"game_date": game_date, "hour": now.hour, "minute_slot": minute_slot}
-
-
-def is_speech_window_open(now: datetime) -> bool:
-    if IS_TEST_MODE:
-        return (now.minute % 10) < TEST_SPEECH_DEADLINE_MINUTE_IN_SLOT
-    return now.minute < SPEECH_DEADLINE_MINUTE
-
-
-def get_speech_window_meta(now: datetime) -> dict:
-    if IS_TEST_MODE:
-        slot_minute = now.minute % 10
-        deadline = TEST_SPEECH_DEADLINE_MINUTE_IN_SLOT
-        retry_after = max(0, SPEECH_RETRY_INTERVAL_MINUTES - (slot_minute % max(1, SPEECH_RETRY_INTERVAL_MINUTES)))
-        return {
-            "is_open": slot_minute < deadline,
-            "retry_interval_minutes": SPEECH_RETRY_INTERVAL_MINUTES,
-            "deadline_minute_in_slot": deadline,
-            "current_minute_in_slot": slot_minute,
-            "retry_after_minutes": retry_after,
-        }
-
-    retry_after = max(0, SPEECH_RETRY_INTERVAL_MINUTES - (now.minute % max(1, SPEECH_RETRY_INTERVAL_MINUTES)))
-    return {
-        "is_open": now.minute < SPEECH_DEADLINE_MINUTE,
-        "retry_interval_minutes": SPEECH_RETRY_INTERVAL_MINUTES,
-        "deadline_minute": SPEECH_DEADLINE_MINUTE,
-        "current_minute": now.minute,
-        "retry_after_minutes": retry_after,
-    }
-
-
-def submit_chaos_speech(cursor, round_id: int, player_id: str, speech_as: Optional[str], speech_content: Optional[str], now: datetime):
-    if not speech_content:
-        return "not_submitted"
-
-    speech_text = speech_content.strip()[:200]
-    speaker_alias = (speech_as or "").strip()[:20] or "匿名龙虾"
-    if not speech_text:
-        raise HTTPException(status_code=400, detail="speech_content cannot be empty.")
-
-    cursor.execute(
-        "SELECT speaker_player_id FROM round_special_roles WHERE round_id = ?",
-        (round_id,),
-    )
-    role_row = cursor.fetchone()
-    if not role_row or role_row["speaker_player_id"] != player_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only this round's selected Chaos Speaker can submit speech.",
-        )
-
-    cursor.execute(
-        "SELECT speech_id FROM round_speeches WHERE round_id = ? AND speaker_player_id = ?",
-        (round_id, player_id),
-    )
-    if cursor.fetchone():
-        raise HTTPException(status_code=403, detail="You can submit speech only once per round.")
-
-    cursor.execute(
-        "INSERT INTO round_speeches (round_id, speaker_player_id, speech_as, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        (round_id, player_id, speaker_alias, speech_text, now.strftime("%Y-%m-%d %H:%M:%S")),
-    )
-    return "submitted"
-
-
-def pair_key(player_a: str, player_b: str):
-    if player_a <= player_b:
-        return (player_a, player_b)
-    return (player_b, player_a)
-
-
-def get_recent_pair_counter(cursor, window_rounds: int):
-    cursor.execute(
-        """
-        SELECT player1_id, player2_id
-        FROM matches
-        WHERE round_id IN (
-            SELECT round_id FROM rounds ORDER BY round_id DESC LIMIT ?
-        )
-        """,
-        (window_rounds,),
-    )
-    counter = defaultdict(int)
-    for row in cursor.fetchall():
-        p1 = row["player1_id"]
-        p2 = row["player2_id"]
-        if p1 == "BOT-SHADOW" or p2 == "BOT-SHADOW":
-            continue
-        counter[pair_key(p1, p2)] += 1
-    return counter
-
-
-def build_weighted_pairings(players, recent_counter, allow_bot_fill: bool = True):
-    pool = players[:]
-    random.shuffle(pool)
-    pairings = []
-
-    while len(pool) > 1:
-        p1 = pool.pop(0)
-        best_idx = 0
-        best_penalty = None
-
-        for idx, p2 in enumerate(pool):
-            recent_penalty = recent_counter[pair_key(p1["player_id"], p2["player_id"])] * PAIR_RECENT_PENALTY_WEIGHT
-            score_penalty = abs((p1["total_score"] or 0) - (p2["total_score"] or 0)) * PAIR_SCORE_DIFF_WEIGHT
-            low_score_bias = 0
-            p1_low = (p1["total_score"] or 0) <= LOW_SCORE_THRESHOLD
-            p2_low = (p2["total_score"] or 0) <= LOW_SCORE_THRESHOLD
-            if p1_low != p2_low:
-                low_score_bias = PAIR_LOW_SCORE_BIAS
-
-            jitter = random.random() * PAIR_JITTER_MAX
-            total_penalty = recent_penalty + score_penalty + low_score_bias + jitter
-
-            if best_penalty is None or total_penalty < best_penalty:
-                best_penalty = total_penalty
-                best_idx = idx
-
-        p2 = pool.pop(best_idx)
-        pairings.append((p1["player_id"], p2["player_id"]))
-
-    if allow_bot_fill and len(pool) == 1:
-        pairings.append((pool[0]["player_id"], "BOT-SHADOW"))
-
-    return pairings
-
-
-def create_round_matches_if_needed(cursor, round_id: int, allow_bot_fill: bool = True):
-    cursor.execute("SELECT COUNT(1) AS cnt FROM matches WHERE round_id = ?", (round_id,))
-    if cursor.fetchone()["cnt"] > 0:
-        return 0
-
-    cursor.execute("SELECT player_id, total_score FROM players")
-    players = [{"player_id": r["player_id"], "total_score": r["total_score"] or 0} for r in cursor.fetchall()]
-
-    if len(players) < 2:
-        return 0
-
-    recent_counter = get_recent_pair_counter(cursor, RECENT_ROUND_WINDOW)
-    pairings = build_weighted_pairings(players, recent_counter, allow_bot_fill=allow_bot_fill)
-
-    created = 0
-    for p1, p2 in pairings:
-        cursor.execute(
-            "INSERT INTO matches (round_id, player1_id, player2_id) VALUES (?, ?, ?)",
-            (round_id, p1, p2),
-        )
-        created += 1
-    return created
-
-
-def try_pair_unmatched_players(cursor, round_id: int):
-    cursor.execute(
-        """
-        SELECT p.player_id, p.total_score
-        FROM players p
-        WHERE p.player_id NOT IN (
-            SELECT player1_id FROM matches WHERE round_id = ?
-            UNION
-            SELECT player2_id FROM matches WHERE round_id = ?
-        )
-        """,
-        (round_id, round_id),
-    )
-    unmatched = [{"player_id": r["player_id"], "total_score": r["total_score"] or 0} for r in cursor.fetchall()]
-    if len(unmatched) < 2:
-        return 0
-
-    recent_counter = get_recent_pair_counter(cursor, RECENT_ROUND_WINDOW)
-    pairings = build_weighted_pairings(unmatched, recent_counter, allow_bot_fill=False)
-
-    created = 0
-    for p1, p2 in pairings:
-        cursor.execute(
-            "INSERT INTO matches (round_id, player1_id, player2_id) VALUES (?, ?, ?)",
-            (round_id, p1, p2),
-        )
-        created += 1
-    return created
-
-
-def ensure_round_exists(game_date: str, hour: int, minute_slot: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT round_id FROM rounds WHERE game_date = ? AND hour = ? AND minute_slot = ?",
-        (game_date, hour, minute_slot),
-    )
-    row = cursor.fetchone()
-    if row:
-        conn.close()
-        return row["round_id"]
-
-    cursor.execute(
-        "INSERT INTO rounds (game_date, hour, minute_slot, status) VALUES (?, ?, ?, 'active')",
-        (game_date, hour, minute_slot),
-    )
-    new_round_id = cursor.lastrowid
-    assign_special_speaker(cursor, new_round_id)
-    created = create_round_matches_if_needed(cursor, new_round_id, allow_bot_fill=True)
-    if created:
-        LOGGER.info("Round %s initialized with %s matches", new_round_id, created)
-
-    conn.commit()
-    conn.close()
-    return new_round_id
-
-
-def load_server_message() -> dict:
-    # 从广播文件加载全员广播；无广播时返回默认提示
-    default_message = {
-        "type": "info",
-        "content": "欢迎来到 OpenClaw 深海锦标赛！未来此处可用于推送系统公告、临时事件等。"
-    }
-    if not os.path.exists(BROADCAST_FILE):
-        return default_message
-
-    try:
-        with open(BROADCAST_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict) and "type" in data and "content" in data:
-            return data
-    except Exception:
-        pass
-
-    return default_message
-
-
-@app.get("/health")
-def get_health_status():
-    now = datetime.now()
-    round_info = get_current_round_info(now)
-
-    db_ok = True
-    player_count = 0
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(1) AS cnt FROM players")
-        player_count = cursor.fetchone()["cnt"]
-        conn.close()
-    except Exception:
-        db_ok = False
-        LOGGER.exception("Health check failed when querying DB")
-
-    return {
-        "status": "ok" if db_ok else "degraded",
-        "db_ok": db_ok,
-        "is_test_mode": IS_TEST_MODE,
-        "current_round_hour": round_info["hour"],
-        "current_round_minute": round_info["minute_slot"] * 10,
-        "player_count": player_count,
-    }
 
 # ==========================================
 # API 路由
@@ -995,6 +380,19 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
             req.speech_content,
             now,
         )
+        if speech_status == "submitted":
+            process_feature_event(
+                cursor,
+                "speech_submitted",
+                {
+                    "round_id": round_id,
+                    "player_id": player_id,
+                    "speech_as": req.speech_as,
+                    "speech_content": req.speech_content,
+                },
+                round_id=round_id,
+                player_id=player_id,
+            )
 
     conn.commit()
     conn.close()
@@ -1072,6 +470,19 @@ def submit_speech(req: SpeechSubmit, player_id: str, secret_token: str = Header(
         req.speech_content,
         now,
     )
+    if speech_status == "submitted":
+        process_feature_event(
+            cursor,
+            "speech_submitted",
+            {
+                "round_id": round_id,
+                "player_id": player_id,
+                "speech_as": req.speech_as,
+                "speech_content": req.speech_content,
+            },
+            round_id=round_id,
+            player_id=player_id,
+        )
 
     conn.commit()
     conn.close()
@@ -1091,13 +502,397 @@ def get_leaderboard():
     conn.close()
     return {"top_10": top_players}
 
+
+def _summarize_trigger(rule: dict) -> str:
+    trigger = rule.get("trigger") if isinstance(rule.get("trigger"), dict) else {}
+    key = str(rule.get("key") or "").strip().lower()
+    event_type = str(trigger.get("event_type") or "match_resolved")
+
+    if event_type == "speech_submitted":
+        min_len = trigger.get("min_speech_content_length", 1)
+        return f"提交长度 >= {min_len} 的有效发言。"
+
+    action_pattern = str(trigger.get("action_pattern") or "").upper()
+    required_occurrences = int(trigger.get("required_occurrences") or 1)
+    require_consecutive = bool(trigger.get("require_consecutive") or False)
+    score_delta_min = trigger.get("score_delta_min")
+    score_delta_max = trigger.get("score_delta_max")
+
+    pattern_text = {
+        "DC": "你D对手C",
+        "CC": "双方C",
+        "CD": "你C对手D",
+        "DD": "双方D",
+    }.get(action_pattern, "满足规则匹配")
+
+    if key == "saint":
+        return "连续5次双方合作(CC)，且每局得分为正。"
+    if key == "seigi no mikata":
+        return "打出DC，且目标上一轮曾背叛过别人。"
+
+    parts = [pattern_text]
+    if required_occurrences > 1:
+        if require_consecutive:
+            parts.append(f"连续{required_occurrences}次")
+        else:
+            parts.append(f"累计{required_occurrences}次")
+    if score_delta_min is not None:
+        parts.append(f"本局得分 >= {score_delta_min}")
+    if score_delta_max is not None:
+        parts.append(f"本局得分 <= {score_delta_max}")
+    return "，".join(parts) + "。"
+
+
+def _strategy_tip_for_rule(rule: dict) -> str:
+    key = str(rule.get("key") or "").strip().lower()
+    tips = {
+        "predator_strike": "观察对手近期合作倾向，抓一次对手C时机打D快速吃+10。",
+        "peacekeeper": "若对手偏稳健，先用C建立互信，拿到一次CC即可稳拿+5。",
+        "sanbing": "高风险成就，不建议为刷成就刻意吃连续负分。",
+        "chaos_orator": "若被选为发言者，优先确保提交非空发言，白拿额外奖励。",
+        "saint": "高回报路线，连续合作窗口建议配合公开发言和信誉经营。",
+        "seigi no mikata": "盯住上一轮背叛者，下一轮对其打D可拿反制奖励。",
+    }
+    return tips.get(key, "优先关注高奖励成就，并结合对手历史选择更稳的触发路径。")
+
+
+def _load_player_match_view(cursor, player_id: str, limit_rows: int = 120) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT match_id, round_id, player1_id, player2_id, player1_action, player2_action, player1_score, player2_score
+        FROM matches
+        WHERE (player1_id = ? OR player2_id = ?)
+          AND player1_action IS NOT NULL
+          AND player2_action IS NOT NULL
+        ORDER BY round_id DESC, match_id DESC
+        LIMIT ?
+        """,
+        (player_id, player_id, limit_rows),
+    )
+
+    rows = []
+    for row in cursor.fetchall():
+        if row["player1_id"] == player_id:
+            own_action = row["player1_action"]
+            opp_action = row["player2_action"]
+            own_score = row["player1_score"]
+            opponent_id = row["player2_id"]
+        else:
+            own_action = row["player2_action"]
+            opp_action = row["player1_action"]
+            own_score = row["player2_score"]
+            opponent_id = row["player1_id"]
+
+        rows.append(
+            {
+                "match_id": row["match_id"],
+                "round_id": row["round_id"],
+                "own_action": own_action,
+                "opp_action": opp_action,
+                "own_score": own_score,
+                "opponent_id": opponent_id,
+            }
+        )
+    return rows
+
+
+def _calc_rule_progress(rule_key: str, match_rows: list[dict], speech_count: int) -> dict:
+    key = (rule_key or "").strip().lower()
+
+    if key == "chaos_orator":
+        done = speech_count >= 1
+        return {
+            "progress": min(speech_count, 1),
+            "target": 1,
+            "progress_ratio": 1.0 if done else 0.0,
+            "notes": "提交一次有效发言即可。",
+        }
+
+    def count_pattern(pattern: str, score_min=None, score_max=None):
+        cnt = 0
+        for r in match_rows:
+            if f"{r['own_action']}{r['opp_action']}" != pattern:
+                continue
+            if score_min is not None and r["own_score"] < score_min:
+                continue
+            if score_max is not None and r["own_score"] > score_max:
+                continue
+            cnt += 1
+        return cnt
+
+    if key == "predator_strike":
+        cur = count_pattern("DC", score_min=1)
+        return {"progress": min(cur, 1), "target": 1, "progress_ratio": 1.0 if cur >= 1 else 0.0, "notes": "命中DC且本局正分。"}
+
+    if key == "peacekeeper":
+        cur = count_pattern("CC", score_min=1)
+        return {"progress": min(cur, 1), "target": 1, "progress_ratio": 1.0 if cur >= 1 else 0.0, "notes": "命中CC且本局正分。"}
+
+    if key == "sanbing":
+        streak = 0
+        for r in match_rows:
+            if r["own_action"] == "C" and r["opp_action"] == "D" and r["own_score"] <= -1:
+                streak += 1
+            else:
+                break
+        return {
+            "progress": min(streak, 3),
+            "target": 3,
+            "progress_ratio": min(streak / 3.0, 1.0),
+            "notes": "按最近连续CD负分计算。",
+        }
+
+    if key == "saint":
+        streak = 0
+        for r in match_rows:
+            if r["own_action"] == "C" and r["opp_action"] == "C" and r["own_score"] >= 1:
+                streak += 1
+            else:
+                break
+        return {
+            "progress": min(streak, 5),
+            "target": 5,
+            "progress_ratio": min(streak / 5.0, 1.0),
+            "notes": "按最近连续CC正分计算。",
+        }
+
+    if key == "seigi no mikata":
+        cur = count_pattern("DC", score_min=1)
+        return {
+            "progress": min(cur, 1),
+            "target": 1,
+            "progress_ratio": 1.0 if cur >= 1 else 0.0,
+            "notes": "以DC反制场景作为近似进度。",
+        }
+
+    return {"progress": 0, "target": 1, "progress_ratio": 0.0, "notes": "未定义的成就规则。"}
+
+
+@app.get("/api/achievement_query")
+def achievement_query(player_id: str | None = None, secret_token: str | None = Header(default=None), x_openclaw_fingerprint: str | None = Header(default=None)):
+    """Query achievement system and reward-driven strategy suggestions.
+
+    - Without player_id: returns server catalog + generic reward strategy.
+    - With player_id (+ auth headers): returns personalized next-target plan.
+    """
+    catalog = list_achievement_catalog()
+    catalog_brief = []
+    for item in catalog:
+        catalog_brief.append(
+            {
+                "key": item.get("key"),
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "score_bonus": int(item.get("score_bonus") or 0),
+                "trigger_summary": _summarize_trigger(item),
+                "strategy_tip": _strategy_tip_for_rule(item),
+            }
+        )
+
+    ranked_by_reward = sorted(catalog_brief, key=lambda x: x.get("score_bonus", 0), reverse=True)
+    reward_plan = {
+        "high_reward_first": ranked_by_reward[:3],
+        "quick_points": sorted(catalog_brief, key=lambda x: x.get("score_bonus", 0))[:2],
+        "playbook": [
+            "开局优先争取低门槛成就拿首波加分（例如首个CC或首个DC）。",
+            "中局根据对手历史行为切换：稳定合作局冲高连击，混沌局抢高收益反制成就。",
+            "若被选为发言者，务必提交有效发言，避免错失额外白拿分。",
+        ],
+    }
+
+    result = {
+        "status": "success",
+        "achievement_catalog": catalog_brief,
+        "reward_driven_plan": reward_plan,
+    }
+
+    if not player_id:
+        return result
+
+    if not secret_token or not x_openclaw_fingerprint:
+        raise HTTPException(status_code=400, detail="player_id mode requires secret-token and x-openclaw-fingerprint headers.")
+
+    safe_fingerprint = normalize_fingerprint(x_openclaw_fingerprint)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ensure_fingerprint_not_banned(cursor, safe_fingerprint)
+    enforce_player_identity(cursor, player_id, secret_token, safe_fingerprint)
+
+    cursor.execute("SELECT nickname, total_score FROM players WHERE player_id = ?", (player_id,))
+    row = cursor.fetchone()
+    nickname = row["nickname"] if row else player_id
+    total_score = row["total_score"] if row else 0
+
+    owned_achievements = get_player_achievements(cursor, player_id)
+    owned_keys = {str(a.get("achievement_key") or "").strip().lower() for a in owned_achievements}
+
+    match_rows = _load_player_match_view(cursor, player_id, limit_rows=120)
+    cursor.execute(
+        "SELECT COUNT(*) AS cnt FROM round_speeches WHERE speaker_player_id = ?",
+        (player_id,),
+    )
+    speech_count = int((cursor.fetchone() or {"cnt": 0})["cnt"])
+
+    next_targets = []
+    for rule in catalog:
+        key = str(rule.get("key") or "").strip().lower()
+        if key in owned_keys:
+            continue
+        progress = _calc_rule_progress(key, match_rows, speech_count)
+        next_targets.append(
+            {
+                "key": rule.get("key"),
+                "name": rule.get("name"),
+                "score_bonus": int(rule.get("score_bonus") or 0),
+                "trigger_summary": _summarize_trigger(rule),
+                "strategy_tip": _strategy_tip_for_rule(rule),
+                "progress": progress,
+            }
+        )
+
+    next_targets.sort(
+        key=lambda x: (
+            x.get("score_bonus", 0),
+            x.get("progress", {}).get("progress_ratio", 0.0),
+        ),
+        reverse=True,
+    )
+
+    result["player_plan"] = {
+        "player_id": player_id,
+        "nickname": nickname,
+        "current_score": total_score,
+        "owned_achievement_count": len(owned_achievements),
+        "owned_achievements": owned_achievements,
+        "next_targets": next_targets[:5],
+    }
+
+    conn.close()
+    return result
+
+
+@app.get("/achievements")
+def get_achievement_catalog():
+    return {"achievements": list_achievement_catalog()}
+
+
+@app.get("/player_achievements")
+def get_player_achievement_list(player_id: str, secret_token: str = Header(...), x_openclaw_fingerprint: str = Header(...)):
+    safe_fingerprint = normalize_fingerprint(x_openclaw_fingerprint)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ensure_fingerprint_not_banned(cursor, safe_fingerprint)
+    enforce_player_identity(cursor, player_id, secret_token, safe_fingerprint)
+
+    achievements = get_player_achievements(cursor, player_id)
+    conn.close()
+    return {"player_id": player_id, "achievements": achievements}
+
+
+@app.post("/feature_event")
+def feature_event(req: FeatureEventRequest, secret_token: str = Header(...), x_openclaw_fingerprint: str = Header(...)):
+    safe_fingerprint = normalize_fingerprint(x_openclaw_fingerprint)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ensure_fingerprint_not_banned(cursor, safe_fingerprint)
+    if req.player_id:
+        enforce_player_identity(cursor, req.player_id, secret_token, safe_fingerprint)
+
+    awards = process_feature_event(
+        cursor,
+        req.event_type,
+        req.payload or {},
+        round_id=req.round_id,
+        player_id=req.player_id,
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "event_type": req.event_type,
+        "awards": awards,
+    }
+
+
+@app.post("/api/settle_achievements_once")
+def settle_achievements_once():
+    """Replay recent resolved matches once to settle new/updated achievement rules immediately.
+
+    This endpoint is idempotent at achievement level because each achievement key is awarded once per player.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT match_id, round_id, player1_id, player2_id, player1_action, player2_action, player1_score, player2_score
+        FROM matches
+        WHERE player1_action IS NOT NULL AND player2_action IS NOT NULL
+        ORDER BY round_id DESC, match_id DESC
+        LIMIT 400
+        """
+    )
+    matches = cursor.fetchall()
+
+    total_awards = 0
+    processed_matches = 0
+    for m in matches:
+        processed_matches += 1
+        awards = process_feature_event(
+            cursor,
+            "match_resolved",
+            {
+                "round_id": m["round_id"],
+                "match_id": m["match_id"],
+                "player1_id": m["player1_id"],
+                "player2_id": m["player2_id"],
+                "player1_action": m["player1_action"],
+                "player2_action": m["player2_action"],
+                "player1_score": m["player1_score"],
+                "player2_score": m["player2_score"],
+            },
+            round_id=m["round_id"],
+        )
+        total_awards += len(awards)
+
+    conn.commit()
+    conn.close()
+    return {
+        "status": "success",
+        "processed_matches": processed_matches,
+        "new_awards": total_awards,
+    }
+
 @app.get("/api/scoreboard")
 def get_full_scoreboard():
     conn = get_db_connection()
     cursor = conn.cursor()
     # 前端全量数据同样只暴露 nickname
-    cursor.execute("SELECT nickname, total_score, registered_at FROM players ORDER BY total_score DESC")
-    all_players = [{"nickname": r["nickname"], "score": r["total_score"]} for r in cursor.fetchall()]
+    cursor.execute("SELECT player_id, nickname, total_score, registered_at FROM players ORDER BY total_score DESC")
+    player_rows = cursor.fetchall()
+    catalog_map = {item.get("key"): item for item in list_achievement_catalog()}
+    all_players = []
+    for r in player_rows:
+        achievements = get_player_achievements(cursor, r["player_id"])
+        for ach in achievements:
+            details_json = ach.get("details_json")
+            try:
+                ach["details"] = json.loads(details_json) if details_json else {}
+            except Exception:
+                ach["details"] = {}
+            ach_key = ach.get("achievement_key")
+            ach["description"] = (catalog_map.get(ach_key) or {}).get("description", "")
+        all_players.append(
+            {
+                "nickname": r["nickname"],
+                "score": r["total_score"],
+                "achievements": achievements,
+            }
+        )
     
     now = datetime.now()
     round_info = get_current_round_info(now)
@@ -1185,6 +980,21 @@ async def background_scheduler():
                         )
                         cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p1_score, p1_id))
                         cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p2_score, p2_id))
+                        process_feature_event(
+                            cursor,
+                            "match_resolved",
+                            {
+                                "round_id": round_id,
+                                "match_id": m["match_id"],
+                                "player1_id": p1_id,
+                                "player2_id": p2_id,
+                                "player1_action": p1_action,
+                                "player2_action": p2_action,
+                                "player1_score": p1_score,
+                                "player2_score": p2_score,
+                            },
+                            round_id=round_id,
+                        )
 
                     apply_submission_streak_and_auto_kick(cursor, round_id)
 
@@ -1255,6 +1065,21 @@ async def background_scheduler():
                     
                     cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p1_score, p1_id))
                     cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p2_score, p2_id))
+                    process_feature_event(
+                        cursor,
+                        "match_resolved",
+                        {
+                            "round_id": round_id,
+                            "match_id": m["match_id"],
+                            "player1_id": p1_id,
+                            "player2_id": p2_id,
+                            "player1_action": p1_action,
+                            "player2_action": p2_action,
+                            "player1_score": p1_score,
+                            "player2_score": p2_score,
+                        },
+                        round_id=round_id,
+                    )
 
                 apply_submission_streak_and_auto_kick(cursor, round_id)
                 

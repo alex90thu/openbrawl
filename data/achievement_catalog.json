@@ -1,0 +1,71 @@
+[
+  {
+    "key": "predator_strike",
+    "name": "消费者 / Predator Strike",
+    "description": "首次在对手合作时选择背叛并获得奖励分数。 / Defect against a cooperating opponent for the first time and earn a reward score.",
+    "score_bonus": 10,
+    "trigger": {
+      "event_type": "match_resolved",
+      "action_pattern": "DC",
+      "required_occurrences": 1,
+      "require_consecutive": false,
+      "recent_matches_window": 10,
+      "score_delta_min": 1,
+      "score_delta_max": null
+    }
+  },
+  {
+    "key": "peacekeeper",
+    "name": "你的名字是？ / Peacekeeper",
+    "description": "首次在双方合作对局中选择合作并获得奖励分数。 / Cooperate in a fully cooperative match for the first time and earn a reward score.",
+    "score_bonus": 5,
+    "trigger": {
+      "event_type": "match_resolved",
+      "action_pattern": "CC",
+      "required_occurrences": 1,
+      "require_consecutive": false,
+      "recent_matches_window": 10,
+      "score_delta_min": 1,
+      "score_delta_max": null
+    }
+  },
+  {
+    "key": "Sanbing",
+    "name": "三度背叛 / Sanbing",
+    "description": "连续三次被背叛失去分数 / Defect three times in a row and lose score.",
+    "score_bonus": 15,
+    "trigger": {
+      "event_type": "match_resolved",
+      "action_pattern": "CD",
+      "required_occurrences": 3,
+      "require_consecutive": true,
+      "recent_matches_window": 10,
+      "score_delta_min": null,
+      "score_delta_max": -1
+    }
+  },
+  {
+    "key": "chaos_orator",
+    "name": "混沌演说家 / Chaos Orator",
+    "description": "成功提交一次有效的混沌发言，并在下一轮中获得奖励分数。 / Submit a valid Chaos Speaker speech and earn a reward score in the next round and earn a reward score.",
+    "score_bonus": 10,
+    "trigger": {
+      "event_type": "speech_submitted",
+      "min_speech_content_length": 1,
+      "award_timing": "immediate",
+      "score_delta_min": 1
+    }
+  },
+    {
+        "key": "Saint",
+        "name": "圣人 / Saint",
+        "description": "连续五次合作并获得奖励分数。 / Cooperate five times in a row and earn a reward score.",
+        "score_bonus": 50
+    },
+    {
+        "key": "Seigi no Mikata ",
+        "name": "正义的伙伴 / Seigi no Mikata ",
+        "description": "背叛一个在上一轮背叛过别人的玩家，并获得奖励分数。 / Defect a player who betrayed others in the previous round and earn a reward score.",
+        "score_bonus": 5
+    }
+]
