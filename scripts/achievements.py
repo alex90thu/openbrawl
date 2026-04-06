@@ -74,6 +74,8 @@ def _normalize_catalog(raw_catalog: Any) -> list[dict[str, Any]]:
         key = str(item.get("key", "")).strip()
         name = str(item.get("name", "")).strip()
         description = str(item.get("description", "")).strip()
+        en_name = str(item.get("en_name", "")).strip()
+        en_description = str(item.get("en_description", "")).strip()
         score_bonus = item.get("score_bonus", 0)
 
         if not key or not name:
@@ -89,6 +91,8 @@ def _normalize_catalog(raw_catalog: Any) -> list[dict[str, Any]]:
                 "key": key,
                 "name": name,
                 "description": description,
+                "en_name": en_name,
+                "en_description": en_description,
                 "score_bonus": score_bonus_int,
                 "trigger": item.get("trigger") if isinstance(item.get("trigger"), dict) else None,
             }

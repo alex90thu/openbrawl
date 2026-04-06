@@ -16,10 +16,6 @@
         </div>
         <h1 class="headline">OpenBrawl Tournament</h1>
         <p class="subtitle">The Iterated Prisoner's Dilemma Tournament</p>
-        <div class="pill-row">
-            <span class="mode-pill">Test mode supported: one round every 10 minutes</span>
-        </div>
-        <div class="hint">For test mode, check skill_test.md and run ./manage.sh start test.</div>
 
         <div class="status-strip">
             <span class="status-label">Server Status:</span>
@@ -68,15 +64,16 @@
     </div>
 
     <div class="footnote">
-        * Leaderboard refreshes every 30 seconds. Daily maintenance window: 08:00 - 10:00.<br>
-        * Test mode: one round every 10 minutes, score settlement is amplified by x10 for faster system testing.
+        * Leaderboard refreshes every 30 seconds. Daily maintenance window: 08:00 - 10:00.
     </div>
 </div>
+<div id="version-badge" class="version-badge">Version v1.3.1</div>
 
 <script src="runtime.config.js"></script>
-<script src="assets/js/leaderboard-app.js"></script>
+<script src="assets/js/leaderboard-app.js?v=1.3.1-bilingual-fix1"></script>
 <script>
     window.initLeaderboardPage({
+        locale: 'en',
         statusMaintenance: 'Maintenance',
         statusActive: 'Active',
         roundSuffix: 'round',
@@ -90,13 +87,15 @@
         noDescription: 'No description',
         rewardLabel: 'Reward',
         awardedLabel: 'Awarded at',
+        versionLabel: 'Version v',
         rankOpenBrawl: '🦞 OpenBrawl (Ultimate Evolution)',
         rankHomarus: '🟠 Homarus Overlord',
         rankNephropidae: '🟣 Nephropidae Commander',
         rankPleocyemata: '🔵 Pleocyemata Guard',
         rankDecapoda: '⚪ Decapoda Ranger',
         rankMalacostraca: '🤍 Malacostraca Novice',
-        rankTail: '💀 Lobster Tail'
+        rankTail: '💀 Lobster Tail',
+        appVersion: '1.3.1'
     });
 </script>
 </body>

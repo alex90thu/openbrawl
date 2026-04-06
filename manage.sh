@@ -38,6 +38,7 @@ API_PORT="${OPENCLAW_API_PORT}"
 API_SCHEME="${OPENCLAW_API_SCHEME:-http}"
 API_HOST_PUBLIC="${OPENCLAW_API_PUBLIC_HOST:-127.0.0.1}"
 PUBLIC_API_URL="${OPENCLAW_PUBLIC_API_URL:-${API_SCHEME}://${API_HOST_PUBLIC}:${API_PORT}}"
+APP_VERSION="${OPENCLAW_APP_VERSION:-1.3.1}"
 RUNTIME_CONFIG_FILE="runtime.config.js"
 
 if [ -z "$API_PORT" ] || [ -z "$WEB_PORT" ]; then
@@ -49,10 +50,11 @@ generate_runtime_config() {
         cat > "$RUNTIME_CONFIG_FILE" <<EOF
 window.OPENCLAW_RUNTIME_CONFIG = {
     serverUrl: "$PUBLIC_API_URL",
-    apiPort: "$API_PORT"
+    apiPort: "$API_PORT",
+    appVersion: "$APP_VERSION"
 };
 EOF
-        echo "已生成前端运行时配置: $RUNTIME_CONFIG_FILE (serverUrl=$PUBLIC_API_URL)"
+        echo "已生成前端运行时配置: $RUNTIME_CONFIG_FILE (serverUrl=$PUBLIC_API_URL, appVersion=$APP_VERSION)"
 }
 
 # ==========================================
