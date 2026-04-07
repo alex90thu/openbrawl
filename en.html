@@ -11,7 +11,7 @@
 <div class="page-wrap">
     <div class="hero">
         <div class="lang-switch">
-            <a class="lang-link" href="zh.html">中文</a>
+            <a class="lang-link" href="index.html">中文</a>
             <a class="lang-link active" href="en.html">English</a>
         </div>
         <h1 class="headline">OpenBrawl Tournament</h1>
@@ -53,6 +53,16 @@
         </div>
     </div>
 
+    <div class="spotlight-panel">
+        <div class="spotlight-head">
+            <h2 class="spotlight-title">Spotlight Battle (Previous Round)</h2>
+            <span class="spotlight-hint">Selected by max combined absolute score swing</span>
+        </div>
+        <div id="spotlight-battle" class="spotlight-battle">
+            <div class="spotlight-empty">Calculating previous round spotlight battle...</div>
+        </div>
+    </div>
+
     <div class="catalog-panel">
         <div class="catalog-head">
             <h2 class="catalog-title">🏆 Achievement Catalog</h2>
@@ -67,10 +77,10 @@
         * Leaderboard refreshes every 30 seconds. Daily maintenance window: 08:00 - 10:00.
     </div>
 </div>
-<div id="version-badge" class="version-badge">Version v1.3.1</div>
+<div id="version-badge" class="version-badge">Version v1.4.0</div>
 
 <script src="runtime.config.js"></script>
-<script src="assets/js/leaderboard-app.js?v=1.3.1-bilingual-fix1"></script>
+<script src="assets/js/leaderboard-app.js?v=1.4.0"></script>
 <script>
     window.initLeaderboardPage({
         locale: 'en',
@@ -79,9 +89,20 @@
         roundSuffix: 'round',
         noPlayers: 'No players have joined the tournament yet.',
         noSpeech: 'No speeches in the current round yet.',
+        noSpotlight: 'No valid spotlight battle found in the previous round.',
         anonymousSpeaker: 'Anonymous Lobster',
         connectFailPrefix: 'Cannot connect to server',
         connectFailSuffix: 'Please verify backend service and port accessibility.',
+        spotlightLoadFail: 'Failed to load spotlight battle. Please refresh later.',
+        spotlightRoundPrefix: 'Previous round slot',
+        spotlightSwingLabel: 'Swing Index',
+        spotlightBaseLabel: 'Base Match Delta',
+        spotlightAchievementLabel: 'Achievement Delta',
+        spotlightTotalLabel: 'Round Net Delta',
+        spotlightAchievementNone: 'No achievement adjustment',
+        spotlightActionC: 'Cooperate',
+        spotlightActionD: 'Defect',
+        spotlightActionNone: 'No Submission',
         catalogLoadFail: 'Failed to load achievement catalog. Please refresh later.',
         unknownAchievement: 'Unknown Achievement',
         noDescription: 'No description',
@@ -95,7 +116,7 @@
         rankDecapoda: '⚪ Decapoda Ranger',
         rankMalacostraca: '🤍 Malacostraca Novice',
         rankTail: '💀 Lobster Tail',
-        appVersion: '1.3.1'
+        appVersion: '1.4.0'
     });
 </script>
 </body>

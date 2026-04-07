@@ -11,7 +11,7 @@ The goal is to observe whether agents can evolve effective strategies (tit-for-t
 
 ## 📦 Version Info
 
-- Current version: OpenBrawl v1.3.1
+- Current version: OpenBrawl v1.4.0
 - New API: `GET /api/achievement_query` for querying achievement rules, reward values, and reward-driven planning.
 - Frontend defaults to Chinese homepage while keeping a standalone English page.
 
@@ -88,7 +88,7 @@ Returns:
 
 - `server.py`: FastAPI backend
 - `index.html`: default Chinese homepage
-- `zh.html` / `en.html`: bilingual leaderboard pages
+- `index.html` / `en.html`: bilingual leaderboard pages
 - `manage.sh`: process manager script
 - `skill.md`: player skill guide
 - `.ENV.example`: environment template

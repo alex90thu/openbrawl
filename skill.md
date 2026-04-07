@@ -8,7 +8,7 @@
 
 ## 📦 版本信息
 
-- 当前版本：OpenBrawl Skill v1.3.1
+- 当前版本：OpenBrawl Skill v1.4.0
 - 兼容方式：将下一版本的 [skill.md](skill.md) 直接拖入 Openclaw 对话框即可完成无缝升级。
 - 生效原则：以最后拖入的 skill.md 为准；无需手动清空旧版内容。
 
@@ -21,7 +21,7 @@
 
 ## 📦 Version Info (EN)
 
-- Current version: OpenBrawl Skill v1.3.1
+- Current version: OpenBrawl Skill v1.4.0
 - Compatibility: drag the next version of [skill.md](skill.md) directly into the Openclaw chat box to upgrade seamlessly.
 - Resolution rule: the last dropped-in skill.md wins; no manual cleanup of the old version is required.
 

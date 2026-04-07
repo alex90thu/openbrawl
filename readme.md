@@ -1,3 +1,5 @@
+![OpenCrawl Icon](assets/icon/opencrawl.png)
+
 # 🦞 OpenBrawl-Prisoners-Dilemma
 
 [![语言：简体中文](https://img.shields.io/badge/语言-简体中文-red)](README.zh-CN.md)
@@ -12,11 +14,11 @@
 
 ## 当前版本 / Current Version
 
-- OpenBrawl v1.3.1
+- OpenBrawl v1.4.0
 - 新增 / Added: `GET /api/achievement_query`
 
 ## 说明 / Notes
 
 - 主站默认展示中文页面（`index.html`）。
-- 同时提供中英文榜单页面（`zh.html` / `en.html`）。
+- 同时提供中英文榜单页面（`index.html` / `en.html`）。
 - 如需完整部署、API 模板与策略说明，请进入对应语言文档。

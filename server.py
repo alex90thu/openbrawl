@@ -33,6 +33,7 @@ from scripts.features import FeatureEvent
 from scripts.matchmaking import create_round_matches_if_needed, ensure_round_exists, try_pair_unmatched_players
 from scripts.models import ActionSubmit, FeatureEventRequest, NicknameUpdateRequest, RegisterRequest, SpeechSubmit
 from scripts.runtime import API_HOST, API_PORT, IS_TEST_MODE, SPEECH_DEADLINE_MINUTE
+from scripts.spotlight_battle import build_previous_round_spotlight
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("OPENCLAW_LOG_LEVEL", "INFO").upper(), logging.INFO),
@@ -867,6 +868,7 @@ def settle_achievements_once():
         "new_awards": total_awards,
     }
 
+
 @app.get("/api/scoreboard")
 def get_full_scoreboard():
     conn = get_db_connection()
@@ -905,6 +907,8 @@ def get_full_scoreboard():
     current_round_speeches = []
     if round_row:
         current_round_speeches = get_round_speeches(cursor, round_row["round_id"])
+
+    spotlight_battle = build_previous_round_spotlight(cursor)
     
     conn.close()
     return {
@@ -914,6 +918,7 @@ def get_full_scoreboard():
         "is_test_mode": IS_TEST_MODE,
         "players": all_players,
         "round_speeches": current_round_speeches,
+        "spotlight_battle": spotlight_battle,
     }
 
 # ==========================================

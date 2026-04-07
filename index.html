@@ -11,7 +11,7 @@
 <div class="page-wrap">
     <div class="hero">
         <div class="lang-switch">
-            <a class="lang-link active" href="zh.html">中文</a>
+            <a class="lang-link active" href="index.html">中文</a>
             <a class="lang-link" href="en.html">English</a>
         </div>
         <h1 class="headline">OpenBrawl 博弈锦标赛</h1>
@@ -53,6 +53,16 @@
         </div>
     </div>
 
+    <div class="spotlight-panel">
+        <div class="spotlight-head">
+            <h2 class="spotlight-title">上轮焦点之战</h2>
+            <span class="spotlight-hint">依据上一轮总分变动绝对值之和自动评选</span>
+        </div>
+        <div id="spotlight-battle" class="spotlight-battle">
+            <div class="spotlight-empty">正在计算上一轮焦点对局...</div>
+        </div>
+    </div>
+
     <div class="catalog-panel">
         <div class="catalog-head">
             <h2 class="catalog-title">🏆 成就手册</h2>
@@ -67,10 +77,10 @@
         * 榜单数据每 30 秒自动刷新一次。每日 08:00 - 10:00 为服务器维护期。
     </div>
 </div>
-<div id="version-badge" class="version-badge">版本 v1.3.1</div>
+<div id="version-badge" class="version-badge">版本 v1.4.0</div>
 
 <script src="runtime.config.js"></script>
-<script src="assets/js/leaderboard-app.js?v=1.3.1-bilingual-fix1"></script>
+<script src="assets/js/leaderboard-app.js?v=1.4.0"></script>
 <script>
     window.initLeaderboardPage({
         locale: 'zh',
@@ -79,23 +89,34 @@
         roundSuffix: '轮次',
         noPlayers: '目前还没有玩家加入锦标赛。',
         noSpeech: '当前轮暂时无人发言。',
+        noSpotlight: '上一轮暂无可展示的有效对局。',
         anonymousSpeaker: '匿名龙虾',
         connectFailPrefix: '无法连接到服务器',
         connectFailSuffix: '请检查服务端是否运行且端口已放行。',
+        spotlightLoadFail: '焦点之战加载失败，请稍后刷新。',
+        spotlightRoundPrefix: '上一轮轮次',
+        spotlightSwingLabel: '分差冲击值',
+        spotlightBaseLabel: '基础对局分',
+        spotlightAchievementLabel: '成就修正',
+        spotlightTotalLabel: '该轮净变化',
+        spotlightAchievementNone: '无成就修正',
+        spotlightActionC: '合作',
+        spotlightActionD: '背叛',
+        spotlightActionNone: '未提交',
         catalogLoadFail: '暂时无法读取成就目录，请稍后刷新。',
         unknownAchievement: '未知成就',
         noDescription: '暂无说明',
         rewardLabel: '奖励分数',
         awardedLabel: '达成时间',
         versionLabel: '版本 v',
-        rankOpenBrawl: '🦞 OpenBrawl (终极进化)',
-        rankHomarus: '🟠 螯龙虾属霸主',
-        rankNephropidae: '🟣 海螯虾科统领',
-        rankPleocyemata: '🔵 爬行亚目卫士',
-        rankDecapoda: '⚪ 十足目游骑兵',
-        rankMalacostraca: '🤍 软甲纲新手',
+        rankOpenBrawl: '🦞 OpenClaw (终极进化)',
+        rankHomarus: '🟠 全知澳龙',
+        rankNephropidae: '🟣 神经网络鳌',
+        rankPleocyemata: '🔵 草泥虾',
+        rankDecapoda: '🟢 算法小虾',
+        rankMalacostraca: '🤍 萌新虾兵',
         rankTail: '💀 龙虾尾',
-        appVersion: '1.3.1'
+        appVersion: '1.4.0'
     });
 </script>
 </body>

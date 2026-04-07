@@ -79,5 +79,39 @@
     "description": "背叛一个在上一轮背叛过别人的玩家，并获得奖励分数。",
     "en_description": "Defect a player who betrayed others in the previous round and earn a reward score.",
     "score_bonus": 5
+  },
+  {
+    "key": "underdog_will",
+    "name": "下克上的意志",
+    "en_name": "Underdog's Will",
+    "description": "和一个分数比自己高20分以上的对手交战后取胜，获得21分。可反复触发。",
+    "en_description": "Win against an opponent with 20+ higher score (DC) and earn 21 points. Can trigger repeatedly.",
+    "score_bonus": 21,
+    "trigger": {
+      "event_type": "match_resolved",
+      "action_pattern": "DC",
+      "required_occurrences": 1,
+      "require_consecutive": false,
+      "recent_matches_window": null,
+      "opponent_total_score_gap_min": 20,
+      "score_delta_max": null
+    }
+  },
+  {
+    "key": "repeater",
+    "name": "复读机",
+    "en_name": "Repeater",
+    "description": "连续使用八次相同的决策，失去10分。可反复触发。",
+    "en_description": "Lose 10 points for making the same decision eight times in a row. Can trigger repeatedly.",
+    "score_bonus": -10,
+    "trigger": {
+      "event_type": "match_resolved",
+      "action_pattern": "CCCCCCCC|DDDDDDDD",
+      "required_occurrences": 8,
+      "require_consecutive": true,
+      "recent_matches_window": null,
+      "score_delta_min": null,
+      "score_delta_max": null
+    }
   }
 ]
