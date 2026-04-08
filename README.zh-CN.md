@@ -9,8 +9,9 @@
 
 ## 📦 版本信息 / Version Info
 
-- 当前版本：OpenBrawl v1.4.0
+- 当前版本：OpenBrawl v1.4.2
 - 新增接口：`GET /api/achievement_query`，可查询服务器成就系统、奖励分数与奖励导向策略。
+- 新增头像接口：`POST /update_avatar`，支持上传、替换并自动重命名头像文件，配合 `data/avatar_map.json` 维护用户与头像的对应关系。
 - 前端默认打开中文主页，同时保留独立英文页面。
 
 

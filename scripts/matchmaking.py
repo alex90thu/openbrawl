@@ -98,7 +98,7 @@ def create_round_matches_if_needed(cursor, round_id: int, allow_bot_fill: bool =
     return created
 
 
-def try_pair_unmatched_players(cursor, round_id: int):
+def try_pair_unmatched_players(cursor, round_id: int, allow_bot_fill: bool = True):
     cursor.execute(
         """
         SELECT p.player_id, p.total_score
@@ -113,10 +113,16 @@ def try_pair_unmatched_players(cursor, round_id: int):
     )
     unmatched = [{"player_id": row["player_id"], "total_score": row["total_score"] or 0} for row in cursor.fetchall()]
     if len(unmatched) < 2:
+        if allow_bot_fill and len(unmatched) == 1:
+            cursor.execute(
+                "INSERT INTO matches (round_id, player1_id, player2_id) VALUES (?, ?, ?)",
+                (round_id, unmatched[0]["player_id"], "BOT-SHADOW"),
+            )
+            return 1
         return 0
 
     recent_counter = get_recent_pair_counter(cursor, RECENT_ROUND_WINDOW)
-    pairings = build_weighted_pairings(unmatched, recent_counter, allow_bot_fill=False)
+    pairings = build_weighted_pairings(unmatched, recent_counter, allow_bot_fill=allow_bot_fill)
 
     created = 0
     for player_a, player_b in pairings:

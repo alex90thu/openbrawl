@@ -1,5 +1,24 @@
 import json
 
+BOT_PLAYER_ID = "BOT-SHADOW"
+BOT_NICKNAME = "基尼太美"
+BOT_AVATAR_KEY = "kunkun"
+
+
+def _build_spotlight_player(player_id, nickname_map):
+    if player_id == BOT_PLAYER_ID:
+        return {
+            "player_id": player_id,
+            "nickname": BOT_NICKNAME,
+            "avatar_key": BOT_AVATAR_KEY,
+        }
+
+    return {
+        "player_id": player_id,
+        "nickname": nickname_map.get(player_id, player_id),
+        "avatar_key": player_id,
+    }
+
 
 def build_previous_round_spotlight(cursor):
     """Return previous-round spotlight battle payload for leaderboard API.
@@ -114,16 +133,8 @@ def build_previous_round_spotlight(cursor):
             "round_hour": latest_round["hour"],
             "round_minute": int(latest_round["minute_slot"] or 0) * 10,
             "match_id": m["match_id"],
-            "left_player": {
-                "player_id": p1_id,
-                "nickname": nickname_map.get(p1_id, p1_id),
-                "avatar_key": p1_id,
-            },
-            "right_player": {
-                "player_id": p2_id,
-                "nickname": nickname_map.get(p2_id, p2_id),
-                "avatar_key": p2_id,
-            },
+            "left_player": _build_spotlight_player(p1_id, nickname_map),
+            "right_player": _build_spotlight_player(p2_id, nickname_map),
             "left_action": m["player1_action"],
             "right_action": m["player2_action"],
             "left_base_delta": p1_base,

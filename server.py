@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from scripts.achievements import get_player_achievements, list_achievement_catalog, process_feature_event
+from scripts.avatar import bind_avatar, preview_avatar_key, sync_avatar_nickname_change, upsert_avatar_asset
 from scripts.db_helpers import (
     apply_submission_streak_and_auto_kick,
     assign_special_speaker,
@@ -31,7 +32,7 @@ from scripts.db_helpers import (
 )
 from scripts.features import FeatureEvent
 from scripts.matchmaking import create_round_matches_if_needed, ensure_round_exists, try_pair_unmatched_players
-from scripts.models import ActionSubmit, FeatureEventRequest, NicknameUpdateRequest, RegisterRequest, SpeechSubmit
+from scripts.models import ActionSubmit, AvatarUpdateRequest, FeatureEventRequest, NicknameUpdateRequest, RegisterRequest, SpeechSubmit
 from scripts.runtime import API_HOST, API_PORT, IS_TEST_MODE, SPEECH_DEADLINE_MINUTE
 from scripts.spotlight_battle import build_previous_round_spotlight
 
@@ -40,6 +41,10 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 LOGGER = logging.getLogger("openclaw.server")
+
+BOT_PLAYER_ID = "BOT-SHADOW"
+BOT_NICKNAME = "基尼太美"
+BOT_FIXED_ACTION = "C"
 
 app = FastAPI(title="OpenBrawl Prisoner's Dilemma API Server")
 
@@ -116,6 +121,18 @@ def register_player(req: RegisterRequest, x_openclaw_fingerprint: str = Header(.
         INSERT INTO players (player_id, nickname, secret_token, fingerprint, nickname_change_count, total_score, registered_at)
         VALUES (?, ?, ?, ?, 0, 0, ?)
     ''', (new_player_id, safe_nickname, new_secret_token, safe_fingerprint, register_time))
+
+    avatar_key = preview_avatar_key(safe_nickname, req.avatar_key)
+    bind_avatar(new_player_id, safe_nickname, avatar_key=avatar_key)
+    avatar_result = None
+    if req.avatar_base64:
+        avatar_result = upsert_avatar_asset(
+            player_id=new_player_id,
+            nickname=safe_nickname,
+            avatar_base64=req.avatar_base64,
+            original_filename=req.avatar_filename,
+            avatar_key=avatar_key,
+        )
     conn.commit()
     conn.close()
     
@@ -123,6 +140,9 @@ def register_player(req: RegisterRequest, x_openclaw_fingerprint: str = Header(.
         "player_id": new_player_id, 
         "nickname": safe_nickname,
         "secret_token": new_secret_token,
+        "avatar_key": avatar_key,
+        "avatar_preview": f"assets/avatar/{avatar_key}",
+        "avatar_uploaded": bool(avatar_result),
         "message": "Registration successful. Please save your credentials safely."
     }
 
@@ -147,10 +167,13 @@ def update_nickname(req: NicknameUpdateRequest, x_openclaw_fingerprint: str = He
         conn.close()
         raise HTTPException(status_code=403, detail="Nickname can only be changed once.")
 
+    old_nickname = player_row["nickname"]
+
     cursor.execute(
         "UPDATE players SET nickname = ?, nickname_change_count = nickname_change_count + 1 WHERE player_id = ?",
         (safe_nickname, req.player_id),
     )
+    sync_avatar_nickname_change(req.player_id, old_nickname, safe_nickname)
     conn.commit()
     conn.close()
 
@@ -159,6 +182,39 @@ def update_nickname(req: NicknameUpdateRequest, x_openclaw_fingerprint: str = He
         "player_id": req.player_id,
         "nickname": safe_nickname,
         "message": "Nickname updated successfully. You have used your one-time nickname change.",
+    }
+
+
+@app.post("/update_avatar")
+def update_avatar(req: AvatarUpdateRequest, x_openclaw_fingerprint: str = Header(...)):
+    safe_fingerprint = normalize_fingerprint(x_openclaw_fingerprint)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ensure_fingerprint_not_banned(cursor, safe_fingerprint)
+    player_row = enforce_player_identity(cursor, req.player_id, req.secret_token, safe_fingerprint)
+
+    if not player_row["fingerprint"]:
+        cursor.execute("UPDATE players SET fingerprint = ? WHERE player_id = ?", (safe_fingerprint, req.player_id))
+        conn.commit()
+
+    avatar_result = upsert_avatar_asset(
+        player_id=req.player_id,
+        nickname=player_row["nickname"],
+        avatar_base64=req.avatar_base64,
+        original_filename=req.avatar_filename,
+        avatar_key=req.avatar_key,
+    )
+
+    conn.close()
+    return {
+        "status": "success",
+        "player_id": req.player_id,
+        "nickname": player_row["nickname"],
+        "avatar_key": avatar_result["avatar_key"],
+        "avatar_path": avatar_result["avatar_path"],
+        "message": "Avatar updated successfully.",
     }
 
 @app.get("/match_info")
@@ -222,10 +278,14 @@ def get_match_info(player_id: str, secret_token: str = Header(...), x_openclaw_f
     opponent_id = match_row["player2_id"] if match_row["player1_id"] == player_id else match_row["player1_id"]
     
     # 提取对手的昵称和分数
-    cursor.execute("SELECT nickname, total_score FROM players WHERE player_id = ?", (opponent_id,))
-    opponent_row = cursor.fetchone()
-    opponent_nickname = opponent_row["nickname"] if opponent_row else "Unknown"
-    opponent_score = opponent_row["total_score"] if opponent_row else 0
+    if opponent_id == BOT_PLAYER_ID:
+        opponent_nickname = BOT_NICKNAME
+        opponent_score = 0
+    else:
+        cursor.execute("SELECT nickname, total_score FROM players WHERE player_id = ?", (opponent_id,))
+        opponent_row = cursor.fetchone()
+        opponent_nickname = opponent_row["nickname"] if opponent_row else "Unknown"
+        opponent_score = opponent_row["total_score"] if opponent_row else 0
     
     cursor.execute('''
         SELECT round_id, player1_id, player2_id, player1_action, player2_action 
@@ -1039,6 +1099,22 @@ async def background_scheduler():
                     p2_action = m["player2_action"]
                     p1_id = m["player1_id"]
                     p2_id = m["player2_id"]
+
+                    # BOT 固定只出合作（C），并写回比赛记录，确保回放/焦点展示一致。
+                    if p1_id == BOT_PLAYER_ID and p1_action is None:
+                        p1_action = BOT_FIXED_ACTION
+                        cursor.execute("UPDATE matches SET player1_action = ? WHERE match_id = ?", (p1_action, m["match_id"]))
+                    if p2_id == BOT_PLAYER_ID and p2_action is None:
+                        p2_action = BOT_FIXED_ACTION
+                        cursor.execute("UPDATE matches SET player2_action = ? WHERE match_id = ?", (p2_action, m["match_id"]))
+
+                    # BOT 固定只出合作（C），并写回比赛记录，确保回放/焦点展示一致。
+                    if p1_id == BOT_PLAYER_ID and p1_action is None:
+                        p1_action = BOT_FIXED_ACTION
+                        cursor.execute("UPDATE matches SET player1_action = ? WHERE match_id = ?", (p1_action, m["match_id"]))
+                    if p2_id == BOT_PLAYER_ID and p2_action is None:
+                        p2_action = BOT_FIXED_ACTION
+                        cursor.execute("UPDATE matches SET player2_action = ? WHERE match_id = ?", (p2_action, m["match_id"]))
                     
                     p1_score, p2_score = 0, 0
                     

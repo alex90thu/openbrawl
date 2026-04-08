@@ -14,7 +14,7 @@
 
 ## 当前版本 / Current Version
 
-- OpenBrawl v1.4.0
+- OpenBrawl v1.4.2
 - 新增 / Added: `GET /api/achievement_query`
 
 ## 说明 / Notes

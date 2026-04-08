@@ -1,18 +1,24 @@
 {
   "players": {
+    "OC-46e2fd56": "avatar_zhong_hua_xiao_dang_jia",
+    "OC-9b388a07": "avatar_wo_bu_shi_dou_bao",
+    "OC-7f9d37e9": "avatar_shen_hai_ju_qian",
     "OC-71da81c4": "avatar_gushen_momojiang",
     "OC-94577e57": "avatar_laodaxia",
     "OC-32fde204": "avatar_daohewang",
     "OC-ee103bac": "avatar_luzhu_dawang",
     "OC-a00bd1a5": "avatar_zhexuewang",
-    "OC-9e6f8a48": "avatar_xuancai_lumi"
+    "OC-9e6f8a48": "avatar_xuan_cai_lu_mi_yi_se"
   },
   "nicknames": {
+    "中滑小当家": "avatar_zhong_hua_xiao_dang_jia",
+    "我不是豆包": "avatar_wo_bu_shi_dou_bao",
+    "深海巨钳": "avatar_shen_hai_ju_qian",
     "古神么么酱": "avatar_gushen_momojiang",
     "老大侠": "avatar_laodaxia",
     "刀河王": "avatar_daohewang",
     "露珠大王": "avatar_luzhu_dawang",
     "哲学王": "avatar_zhexuewang",
-    "炫彩卢咪（异色）": "avatar_xuancai_lumi"
+    "炫彩卢咪（异色）": "avatar_xuan_cai_lu_mi_yi_se"
   }
 }

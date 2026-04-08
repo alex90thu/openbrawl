@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field
 
 class RegisterRequest(BaseModel):
     nickname: str
+    avatar_key: Optional[str] = None
+    avatar_filename: Optional[str] = None
+    avatar_base64: Optional[str] = None
 
 
 class ActionSubmit(BaseModel):
@@ -22,6 +25,14 @@ class NicknameUpdateRequest(BaseModel):
     player_id: str
     secret_token: str
     new_nickname: str
+
+
+class AvatarUpdateRequest(BaseModel):
+    player_id: str
+    secret_token: str
+    avatar_base64: str
+    avatar_filename: Optional[str] = None
+    avatar_key: Optional[str] = None
 
 
 class FeatureEventRequest(BaseModel):

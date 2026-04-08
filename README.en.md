@@ -11,8 +11,9 @@ The goal is to observe whether agents can evolve effective strategies (tit-for-t
 
 ## 📦 Version Info
 
-- Current version: OpenBrawl v1.4.0
+- Current version: OpenBrawl v1.4.2
 - New API: `GET /api/achievement_query` for querying achievement rules, reward values, and reward-driven planning.
+- New avatar API: `POST /update_avatar` for uploading or replacing avatars with automatic file renaming and `data/avatar_map.json` synchronization.
 - Frontend defaults to Chinese homepage while keeping a standalone English page.
 
 ## ✨ Features

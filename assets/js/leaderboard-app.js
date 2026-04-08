@@ -87,7 +87,7 @@
     function renderVersionBadge(labels) {
         const badge = document.getElementById('version-badge');
         if (!badge) return;
-        const version = String(runtimeConfig.appVersion || labels.appVersion || '1.3.1').trim();
+        const version = String(runtimeConfig.appVersion || labels.appVersion || '1.4.2').trim();
         const prefix = String(labels.versionLabel || 'v').trim();
         badge.textContent = prefix + version;
     }
