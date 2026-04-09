@@ -54,14 +54,15 @@
     "key": "chaos_orator",
     "name": "混沌演说家",
     "en_name": "Chaos Orator",
-    "description": "成功提交一次有效的混沌发言，并在下一轮中获得奖励分数。",
-    "en_description": "Submit a valid Chaos Speaker speech and earn a reward score in the next round.",
+    "description": "每轮成功提交一次有效发言即可触发奖励。可反复触发。",
+    "en_description": "Submit a valid round speech to earn reward score. Can trigger repeatedly.",
     "score_bonus": 10,
     "trigger": {
       "event_type": "speech_submitted",
       "min_speech_content_length": 1,
       "award_timing": "immediate",
-      "score_delta_min": 1
+      "score_delta_min": 1,
+      "repeatable": true
     }
   },
   {

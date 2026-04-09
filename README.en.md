@@ -92,8 +92,26 @@ Returns:
 - `index.html` / `en.html`: bilingual leaderboard pages
 - `manage.sh`: process manager script
 - `skill.md`: player skill guide
+- `docs/DEVELOPMENT_GUIDE.en.md`: detailed developer guide for community and AI contributors
+- `docs/DEVELOPMENT_GUIDE.zh-CN.md`: Chinese version of the same developer guide
 - `.ENV.example`: environment template
 - `.ENV`: local environment file (do not commit)
+
+## 🛠️ Community Developer Guide (Vibe-Coding)
+
+To help community contributors and AI agents onboard quickly, we added bilingual development guides:
+
+- English: `docs/DEVELOPMENT_GUIDE.en.md`
+- 中文: `docs/DEVELOPMENT_GUIDE.zh-CN.md`
+
+They include:
+
+- Module-by-module breakdown for `scripts/`
+- Extension playbook for achievements, event hooks, matchmaking, and API/model layers
+- AI collaboration rules (minimal diffs, compatibility constraints, and validation loop)
+- A task-type quick index (where to start for achievements, matchmaking, API extension, etc.)
+- Copy-paste AI prompt templates (achievement, matchmaking, API field, offline repair, bilingual docs sync)
+- Executable task-sheet templates with acceptance and rollback checklists
 
 ## 🔐 Environment Setup
 

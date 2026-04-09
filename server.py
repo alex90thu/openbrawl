@@ -306,9 +306,6 @@ def get_match_info(player_id: str, secret_token: str = Header(...), x_openclaw_f
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT speaker_player_id FROM round_special_roles WHERE round_id = ?", (round_id,))
-    role_row = cursor.fetchone()
-    is_special_speaker = bool(role_row and role_row["speaker_player_id"] == player_id)
     cursor.execute(
         "SELECT speech_id FROM round_speeches WHERE round_id = ? AND speaker_player_id = ?",
         (round_id, player_id),
@@ -325,8 +322,8 @@ def get_match_info(player_id: str, secret_token: str = Header(...), x_openclaw_f
         "opponent_history": history_actions,
         "server_message": server_message,  # 客户端可选解析
         "special_event": {
-            "is_special_speaker": is_special_speaker,
-            "instruction": "You are this round's Chaos Speaker. You may submit one optional speech with your decision and impersonate any name." if is_special_speaker else "",
+            "is_special_speaker": True,
+            "instruction": "All players must submit one speech with the round decision. Server will randomly publish one speech for this round.",
             "speech_already_submitted": has_submitted_speech,
             "speech_retry_interval_minutes": speech_meta["retry_interval_minutes"],
             "speech_window_open": speech_meta["is_open"],
@@ -422,38 +419,44 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
             UPDATE matches SET player2_action = ?, p2_submit_time = ? WHERE match_id = ?
         ''', (req.action, submit_timestamp, match_row["match_id"]))
         
-    speech_status = "not_submitted"
-    if req.speech_content:
-        if not is_speech_window_open(now):
-            conn.close()
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Chaos speech submission window closed for this round. "
-                    f"Please submit before minute {SPEECH_DEADLINE_MINUTE}."
-                ),
-            )
-        speech_status = submit_chaos_speech(
-            cursor,
-            round_id,
-            player_id,
-            req.speech_as,
-            req.speech_content,
-            now,
+    if not req.speech_content or not req.speech_content.strip():
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="speech_content is required for every round submission.",
         )
-        if speech_status == "submitted":
-            process_feature_event(
-                cursor,
-                "speech_submitted",
-                {
-                    "round_id": round_id,
-                    "player_id": player_id,
-                    "speech_as": req.speech_as,
-                    "speech_content": req.speech_content,
-                },
-                round_id=round_id,
-                player_id=player_id,
-            )
+
+    if not is_speech_window_open(now):
+        conn.close()
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Chaos speech submission window closed for this round. "
+                f"Please submit before minute {SPEECH_DEADLINE_MINUTE}."
+            ),
+        )
+
+    speech_status = submit_chaos_speech(
+        cursor,
+        round_id,
+        player_id,
+        req.speech_as,
+        req.speech_content,
+        now,
+    )
+    if speech_status == "submitted":
+        process_feature_event(
+            cursor,
+            "speech_submitted",
+            {
+                "round_id": round_id,
+                "player_id": player_id,
+                "speech_as": req.speech_as,
+                "speech_content": req.speech_content,
+            },
+            round_id=round_id,
+            player_id=player_id,
+        )
 
     conn.commit()
     conn.close()
@@ -571,6 +574,9 @@ def _summarize_trigger(rule: dict) -> str:
 
     if event_type == "speech_submitted":
         min_len = trigger.get("min_speech_content_length", 1)
+        repeatable = bool(trigger.get("repeatable") or False)
+        if repeatable:
+            return f"每轮提交长度 >= {min_len} 的有效发言，可重复触发。"
         return f"提交长度 >= {min_len} 的有效发言。"
 
     action_pattern = str(trigger.get("action_pattern") or "").upper()
@@ -610,7 +616,7 @@ def _strategy_tip_for_rule(rule: dict) -> str:
         "predator_strike": "观察对手近期合作倾向，抓一次对手C时机打D快速吃+10。",
         "peacekeeper": "若对手偏稳健，先用C建立互信，拿到一次CC即可稳拿+5。",
         "sanbing": "高风险成就，不建议为刷成就刻意吃连续负分。",
-        "chaos_orator": "若被选为发言者，优先确保提交非空发言，白拿额外奖励。",
+        "chaos_orator": "每轮提交决策时都附带非空发言，这是稳定且可重复的加分来源。",
         "saint": "高回报路线，连续合作窗口建议配合公开发言和信誉经营。",
         "seigi no mikata": "盯住上一轮背叛者，下一轮对其打D可拿反制奖励。",
     }
@@ -757,7 +763,7 @@ def achievement_query(player_id: str | None = None, secret_token: str | None = H
         "playbook": [
             "开局优先争取低门槛成就拿首波加分（例如首个CC或首个DC）。",
             "中局根据对手历史行为切换：稳定合作局冲高连击，混沌局抢高收益反制成就。",
-            "若被选为发言者，务必提交有效发言，避免错失额外白拿分。",
+            "每轮提交决策时务必附带有效发言；服务器会随机公开其中一条。",
         ],
     }
 
@@ -798,7 +804,9 @@ def achievement_query(player_id: str | None = None, secret_token: str | None = H
     next_targets = []
     for rule in catalog:
         key = str(rule.get("key") or "").strip().lower()
-        if key in owned_keys:
+        trigger = rule.get("trigger") if isinstance(rule.get("trigger"), dict) else {}
+        repeatable = bool(trigger.get("repeatable") or False)
+        if key in owned_keys and not repeatable:
             continue
         progress = _calc_rule_progress(key, match_rows, speech_count)
         next_targets.append(

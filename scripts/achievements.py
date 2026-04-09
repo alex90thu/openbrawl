@@ -49,11 +49,12 @@ DEFAULT_ACHIEVEMENT_CATALOG = [
     {
         "key": "chaos_orator",
         "name": "Chaos Orator",
-        "description": "Submit a valid Chaos Speaker speech.",
+        "description": "Submit a valid round speech. Can trigger repeatedly.",
         "score_bonus": 12,
         "trigger": {
             "event_type": "speech_submitted",
             "min_speech_content_length": 1,
+            "repeatable": True,
         },
     },
     {
@@ -189,6 +190,7 @@ def _default_trigger_for_key(achievement_key: str) -> dict[str, Any]:
         "chaos_orator": {
             "event_type": "speech_submitted",
             "min_speech_content_length": 1,
+            "repeatable": True,
         },
         "saint": {
             "event_type": "match_resolved",
@@ -249,6 +251,7 @@ def _resolve_trigger(rule: dict[str, Any]) -> dict[str, Any]:
     trigger["required_occurrences"] = max(1, _to_int(trigger.get("required_occurrences", 1), 1))
     trigger["recent_matches_window"] = max(1, _to_int(trigger.get("recent_matches_window", 10), 10))
     trigger["require_consecutive"] = _to_bool(trigger.get("require_consecutive", False), False)
+    trigger["repeatable"] = _to_bool(trigger.get("repeatable", False), False)
 
     if "score_delta_min" in trigger and trigger["score_delta_min"] is not None:
         trigger["score_delta_min"] = _to_int(trigger["score_delta_min"], 0)
@@ -299,13 +302,30 @@ def _award_once(
     source_event: str,
     details: dict[str, Any],
     now: datetime,
+    repeatable: bool = False,
 ) -> dict[str, Any] | None:
     cursor.execute(
         "SELECT 1 FROM player_achievements WHERE player_id = ? AND achievement_key = ?",
         (player_id, achievement_key),
     )
-    if cursor.fetchone():
+    already_awarded = cursor.fetchone() is not None
+    if already_awarded and not repeatable:
         return None
+
+    if already_awarded and repeatable:
+        cursor.execute(
+            "UPDATE players SET total_score = total_score + ? WHERE player_id = ?",
+            (score_bonus, player_id),
+        )
+        return {
+            "player_id": player_id,
+            "achievement_key": achievement_key,
+            "achievement_name": achievement_name,
+            "score_bonus": score_bonus,
+            "source_event": source_event,
+            "repeatable": True,
+            "recorded": False,
+        }
 
     details_json = json.dumps(details, ensure_ascii=False, sort_keys=True)
     cursor.execute(
@@ -334,6 +354,8 @@ def _award_once(
         "achievement_name": achievement_name,
         "score_bonus": score_bonus,
         "source_event": source_event,
+        "repeatable": repeatable,
+        "recorded": True,
     }
 
 
@@ -662,6 +684,7 @@ def award_match_achievements(cursor, event: FeatureEvent) -> list[dict[str, Any]
                     "trigger": trigger,
                 },
                 now,
+                repeatable=bool(trigger.get("repeatable")),
             )
             if award:
                 awards.append(award)
@@ -703,6 +726,7 @@ def award_speech_achievements(cursor, event: FeatureEvent) -> list[dict[str, Any
                 "trigger": trigger,
             },
             event.created_at,
+            repeatable=bool(trigger.get("repeatable")),
         )
         if award:
             awards.append(award)

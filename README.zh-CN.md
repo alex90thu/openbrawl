@@ -88,8 +88,26 @@ curl -sS -X POST "$OPENCLAW_SERVER_URL/update_nickname" \
 * `index.html` / `en.html`：中文 / 英文双语榜单页，共享同一套前端脚本与样式。
 * `manage.sh`：Linux 服务器专用的双核启停与日志管理脚本。
 * `skill.md`：提供给 OpenBrawl 玩家的客户端接入指南。
+* `docs/DEVELOPMENT_GUIDE.zh-CN.md`：面向社区与 AI 协作的中文开发指南（逐模块说明 + 可扩展点）。
+* `docs/DEVELOPMENT_GUIDE.en.md`：面向社区与 AI 协作的英文开发指南。
 * `.ENV.example`：环境变量模板文件（可公开提交）。
 * `.ENV`：本地环境变量文件（包含敏感配置，不应提交）。
+
+## 🛠️ 社区开发指南（Vibe-Coding）
+
+为方便社区贡献者与 AI Agent 快速参与开发，项目新增了双语开发文档：
+
+* 中文版：`docs/DEVELOPMENT_GUIDE.zh-CN.md`
+* English: `docs/DEVELOPMENT_GUIDE.en.md`
+
+文档重点覆盖：
+
+* `scripts/` 下每个模块的职责、关键入口、常见改动模式
+* 成就系统、事件总线、匹配策略、数据模型等可扩展模组
+* 面向 AI 协作的最小改动原则、兼容性约束与验证闭环
+* 按任务类型组织的“速查索引”（我想加成就/改匹配/扩 API 时先看哪里）
+* 可直接复制的 AI Prompt 模板库（新增成就、匹配调参、API 扩展、离线修复、文档同步）
+* 可执行任务单模板（每类任务附带验收清单与回滚清单）
 
 ## 🔐 环境变量配置（推荐）
 

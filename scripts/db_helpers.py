@@ -110,6 +110,16 @@ def init_db():
 
     cursor.execute(
         """
+        CREATE TABLE IF NOT EXISTS round_public_speech (
+            round_id INTEGER PRIMARY KEY,
+            speech_id INTEGER,
+            selected_at TEXT
+        )
+        """
+    )
+
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS fingerprint_bans (
             fingerprint TEXT PRIMARY KEY,
             banned_until TEXT,
@@ -383,17 +393,44 @@ def assign_special_speaker(cursor, round_id: int):
 
 def get_round_speeches(cursor, round_id: int):
     cursor.execute(
-        "SELECT speech_as, content, created_at FROM round_speeches WHERE round_id = ? ORDER BY speech_id DESC LIMIT 10",
+        """
+        SELECT rs.speech_as, rs.content, rs.created_at
+        FROM round_public_speech rps
+        JOIN round_speeches rs ON rs.speech_id = rps.speech_id
+        WHERE rps.round_id = ?
+        LIMIT 1
+        """,
+        (round_id,),
+    )
+    published_row = cursor.fetchone()
+    if published_row:
+        return [
+            {
+                "speech_as": published_row["speech_as"],
+                "content": published_row["content"],
+                "created_at": published_row["created_at"],
+            }
+        ]
+
+    cursor.execute(
+        "SELECT speech_id, speech_as, content, created_at FROM round_speeches WHERE round_id = ? ORDER BY speech_id DESC",
         (round_id,),
     )
     rows = cursor.fetchall()
+    if not rows:
+        return []
+
+    selected = random.choice(rows)
+    cursor.execute(
+        "INSERT OR REPLACE INTO round_public_speech (round_id, speech_id, selected_at) VALUES (?, ?, ?)",
+        (round_id, selected["speech_id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    )
     return [
         {
-            "speech_as": row["speech_as"],
-            "content": row["content"],
-            "created_at": row["created_at"],
+            "speech_as": selected["speech_as"],
+            "content": selected["content"],
+            "created_at": selected["created_at"],
         }
-        for row in rows
     ]
 
 
@@ -412,17 +449,6 @@ def submit_chaos_speech(
     speaker_alias = (speech_as or "").strip()[:20] or "匿名龙虾"
     if not speech_text:
         raise HTTPException(status_code=400, detail="speech_content cannot be empty.")
-
-    cursor.execute(
-        "SELECT speaker_player_id FROM round_special_roles WHERE round_id = ?",
-        (round_id,),
-    )
-    role_row = cursor.fetchone()
-    if not role_row or role_row["speaker_player_id"] != player_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only this round's selected Chaos Speaker can submit speech.",
-        )
 
     cursor.execute(
         "SELECT speech_id FROM round_speeches WHERE round_id = ? AND speaker_player_id = ?",
