@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import sqlite3
+from threading import Lock
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -21,6 +22,72 @@ from .runtime import (
 
 
 LOGGER = logging.getLogger("openclaw.server")
+SPEECH_ROUND_DEBUG = os.getenv("OPENCLAW_SPEECH_ROUND_DEBUG", "1") == "1"
+SPEECH_ROUND_LOG_FILE = os.getenv("OPENCLAW_SPEECH_ROUND_LOG_FILE", "log/speech_round.log")
+SPEECH_ROUND_LOG_INTERVAL_SECONDS = int(os.getenv("OPENCLAW_SPEECH_ROUND_LOG_INTERVAL_SECONDS", "3600"))
+_SPEECH_ROUND_LAST_LOG_TS: dict[int, float] = {}
+_SPEECH_ROUND_LOG_LOCK = Lock()
+
+
+def _write_speech_round_log(line: str):
+    if not SPEECH_ROUND_DEBUG:
+        return
+    try:
+        log_dir = os.path.dirname(SPEECH_ROUND_LOG_FILE)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        with open(SPEECH_ROUND_LOG_FILE, "a", encoding="utf-8") as log_file:
+            log_file.write(line + "\n")
+    except Exception as exc:
+        LOGGER.warning("Failed to write speech round debug log: %s", exc)
+
+
+def _log_round_speeches_snapshot(cursor, round_id: int, selected_speech_id: Optional[int], reason: str):
+    if not SPEECH_ROUND_DEBUG:
+        return
+
+    now_ts = datetime.now().timestamp()
+    with _SPEECH_ROUND_LOG_LOCK:
+        # 常规快照同一轮最多每 1 小时写一次；选中事件始终记录。
+        if reason != "public_speech_selected":
+            last_ts = _SPEECH_ROUND_LAST_LOG_TS.get(round_id, 0.0)
+            if now_ts - last_ts < max(1, SPEECH_ROUND_LOG_INTERVAL_SECONDS):
+                return
+        _SPEECH_ROUND_LAST_LOG_TS[round_id] = now_ts
+
+    cursor.execute(
+        """
+        SELECT rs.speech_id, rs.speaker_player_id, rs.speech_as, rs.content, rs.created_at, p.nickname
+        FROM round_speeches rs
+        LEFT JOIN players p ON p.player_id = rs.speaker_player_id
+        WHERE rs.round_id = ?
+        ORDER BY rs.speech_id ASC
+        """,
+        (round_id,),
+    )
+    rows = cursor.fetchall()
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _write_speech_round_log(
+        f"[{ts}] round_id={round_id} reason={reason} selected_speech_id={selected_speech_id or 'None'} total_speeches={len(rows)}"
+    )
+
+    for row in rows:
+        selected_flag = "YES" if selected_speech_id and row["speech_id"] == selected_speech_id else "NO"
+        display_name = (row["nickname"] or row["speech_as"] or "匿名龙虾").strip()[:20]
+        alias_name = (row["speech_as"] or "").strip()[:20]
+        content_preview = (row["content"] or "").replace("\n", " ").strip()[:80]
+        _write_speech_round_log(
+            "  - speech_id={speech_id} selected={selected} speaker_player_id={speaker} display={display} alias={alias} created_at={created_at} content={content}".format(
+                speech_id=row["speech_id"],
+                selected=selected_flag,
+                speaker=row["speaker_player_id"],
+                display=display_name,
+                alias=alias_name,
+                created_at=row["created_at"],
+                content=content_preview,
+            )
+        )
 
 
 def init_db():
@@ -394,26 +461,34 @@ def assign_special_speaker(cursor, round_id: int):
 def get_round_speeches(cursor, round_id: int):
     cursor.execute(
         """
-        SELECT rs.speech_as, rs.content, rs.created_at
+        SELECT rs.speech_id, rs.speaker_player_id, rs.speech_as, rs.content, rs.created_at, p.nickname
         FROM round_public_speech rps
         JOIN round_speeches rs ON rs.speech_id = rps.speech_id
+        LEFT JOIN players p ON p.player_id = rs.speaker_player_id
         WHERE rps.round_id = ?
         LIMIT 1
         """,
         (round_id,),
     )
     published_row = cursor.fetchone()
-    if published_row:
+    if published_row and published_row["nickname"]:
+        _log_round_speeches_snapshot(cursor, round_id, int(published_row["speech_id"]), "public_speech_read")
         return [
             {
-                "speech_as": published_row["speech_as"],
+                "speech_as": published_row["nickname"],
                 "content": published_row["content"],
                 "created_at": published_row["created_at"],
             }
         ]
 
     cursor.execute(
-        "SELECT speech_id, speech_as, content, created_at FROM round_speeches WHERE round_id = ? ORDER BY speech_id DESC",
+        """
+        SELECT rs.speech_id, rs.speaker_player_id, rs.speech_as, rs.content, rs.created_at, p.nickname
+        FROM round_speeches rs
+        JOIN players p ON p.player_id = rs.speaker_player_id
+        WHERE rs.round_id = ?
+        ORDER BY rs.speech_id DESC
+        """,
         (round_id,),
     )
     rows = cursor.fetchall()
@@ -425,9 +500,12 @@ def get_round_speeches(cursor, round_id: int):
         "INSERT OR REPLACE INTO round_public_speech (round_id, speech_id, selected_at) VALUES (?, ?, ?)",
         (round_id, selected["speech_id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     )
+    # 立即持久化随机发布结果，避免请求间重复随机导致发言墙抖动。
+    cursor.connection.commit()
+    _log_round_speeches_snapshot(cursor, round_id, int(selected["speech_id"]), "public_speech_selected")
     return [
         {
-            "speech_as": selected["speech_as"],
+            "speech_as": selected["nickname"],
             "content": selected["content"],
             "created_at": selected["created_at"],
         }
@@ -450,6 +528,12 @@ def submit_chaos_speech(
     if not speech_text:
         raise HTTPException(status_code=400, detail="speech_content cannot be empty.")
 
+    cursor.execute("SELECT nickname FROM players WHERE player_id = ?", (player_id,))
+    nickname_row = cursor.fetchone()
+    if nickname_row and nickname_row["nickname"]:
+        # 发言墙展示名统一绑定玩家昵称，避免出现非玩家身份名。
+        speaker_alias = str(nickname_row["nickname"]).strip()[:20] or "匿名龙虾"
+
     cursor.execute(
         "SELECT speech_id FROM round_speeches WHERE round_id = ? AND speaker_player_id = ?",
         (round_id, player_id),
@@ -461,6 +545,21 @@ def submit_chaos_speech(
         "INSERT INTO round_speeches (round_id, speaker_player_id, speech_as, content, created_at) VALUES (?, ?, ?, ?, ?)",
         (round_id, player_id, speaker_alias, speech_text, now.strftime("%Y-%m-%d %H:%M:%S")),
     )
+
+    inserted_speech_id = cursor.lastrowid
+    cursor.execute(
+        "SELECT speech_id FROM round_public_speech WHERE round_id = ? LIMIT 1",
+        (round_id,),
+    )
+    selected_row = cursor.fetchone()
+    selected_speech_id = int(selected_row["speech_id"]) if selected_row else None
+    _log_round_speeches_snapshot(
+        cursor,
+        round_id,
+        selected_speech_id,
+        f"speech_submitted:new_speech_id={inserted_speech_id}",
+    )
+
     return "submitted"
 
 

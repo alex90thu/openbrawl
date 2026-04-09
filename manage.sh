@@ -38,7 +38,7 @@ API_PORT="${OPENCLAW_API_PORT}"
 API_SCHEME="${OPENCLAW_API_SCHEME:-http}"
 API_HOST_PUBLIC="${OPENCLAW_API_PUBLIC_HOST:-127.0.0.1}"
 PUBLIC_API_URL="${OPENCLAW_PUBLIC_API_URL:-${API_SCHEME}://${API_HOST_PUBLIC}:${API_PORT}}"
-APP_VERSION="${OPENCLAW_APP_VERSION:-1.4.2}"
+APP_VERSION="${OPENCLAW_APP_VERSION:-1.5.0}"
 RUNTIME_CONFIG_FILE="runtime.config.js"
 
 if [ -z "$API_PORT" ] || [ -z "$WEB_PORT" ]; then
@@ -377,6 +377,7 @@ restart() {
 # 新一轮游戏：备份数据库并重启
 new_game() {
     echo "=========================================="
+    stop
     NOW=$(date +"%Y%m%d_%H%M%S")
     mkdir -p data/records
     for DB in data/openclaw_game.db data/openclaw_game.db2; do
@@ -387,7 +388,7 @@ new_game() {
             echo "已备份并清空 $DB -> data/records/${BASE}_$NOW"
         fi
     done
-    restart
+    start
     echo "新一轮游戏已开始。"
     echo "=========================================="
 }

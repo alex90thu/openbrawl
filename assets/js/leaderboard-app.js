@@ -9,7 +9,8 @@
         saint: '✝️',
         'seigi no mikata': '🫵',
         underdog_will: '🐾',
-        repeater: '🔁'
+        repeater: '🔁',
+        top_player: '⏪'
     };
 
     let achievementSettledOnce = false;
@@ -75,13 +76,28 @@
     }
 
     function getTitleInfo(score, labels) {
-        if (score >= 101) return { text: labels.rankOpenBrawl, class: 'title-openclaw' };
+        if (score > 200) return { text: labels.rankDaCongMing || labels.rankOpenBrawl, class: 'title-da-cong-ming' };
+        if (score >= 100) return { text: labels.rankOpenBrawl, class: 'title-openclaw' };
         if (score >= 81) return { text: labels.rankHomarus, class: 'title-homarus' };
         if (score >= 61) return { text: labels.rankNephropidae, class: 'title-nephropidae' };
         if (score >= 41) return { text: labels.rankPleocyemata, class: 'title-pleocyemata' };
         if (score >= 21) return { text: labels.rankDecapoda, class: 'title-decapoda' };
         if (score >= 0) return { text: labels.rankMalacostraca, class: 'title-malacostraca' };
         return { text: labels.rankTail, class: 'title-tail' };
+    }
+
+    function buildBandRankMap(players, filterFn) {
+        const uniqueScores = Array.from(new Set(
+            (Array.isArray(players) ? players : [])
+                .map(function (player) { return Number(player && player.score !== undefined ? player.score : 0); })
+                .filter(function (score) { return filterFn(score); })
+        )).sort(function (left, right) { return right - left; });
+
+        const rankByScore = {};
+        uniqueScores.forEach(function (score, index) {
+            rankByScore[score] = index + 1;
+        });
+        return rankByScore;
     }
 
     function renderVersionBadge(labels) {
@@ -404,16 +420,22 @@
     async function fetchLeaderboard(labels) {
         try {
             const locale = labels.locale === 'en' ? 'en' : 'zh';
+            const cacheBuster = Date.now();
             if (!achievementSettledOnce) {
                 achievementSettledOnce = true;
                 try {
-                    await fetch(SERVER_URL + '/api/settle_achievements_once', { method: 'POST' });
+                    await fetch(SERVER_URL + '/api/settle_achievements_once?_t=' + cacheBuster, {
+                        method: 'POST',
+                        cache: 'no-store'
+                    });
                 } catch (e) {
                     console.warn('settle_achievements_once failed:', e);
                 }
             }
 
-            const response = await fetch(SERVER_URL + '/api/scoreboard');
+            const response = await fetch(SERVER_URL + '/api/scoreboard?_t=' + cacheBuster, {
+                cache: 'no-store'
+            });
             if (!response.ok) throw new Error('Network response was not ok');
             const data = await response.json();
 
@@ -454,8 +476,22 @@
             if (!Array.isArray(data.players) || data.players.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="board-empty">' + escapeHtml(labels.noPlayers) + '</td></tr>';
             } else {
+                const midScoreRankByScore = buildBandRankMap(data.players, function (score) {
+                    return score >= 101 && score <= 200;
+                });
+                const lowScoreRankByScore = buildBandRankMap(data.players, function (score) {
+                    return score <= 100;
+                });
                 data.players.forEach(function (player, index) {
                     const title = getTitleInfo(player.score, labels);
+                    let rankText = String(index + 1);
+                    if (player.score > 200) {
+                        rankText = '?';
+                    } else if (player.score >= 101) {
+                        rankText = String(midScoreRankByScore[Number(player.score)] || rankText);
+                    } else if (player.score <= 100) {
+                        rankText = String(lowScoreRankByScore[Number(player.score)] || rankText);
+                    }
 
                     let rankStyle = 'color:#d8cfbf;';
                     if (player.score >= 0) {
@@ -491,7 +527,7 @@
 
                     const row = document.createElement('tr');
                     row.innerHTML =
-                        '<td style="' + rankStyle + '">#' + (index + 1) + '</td>' +
+                        '<td style="' + rankStyle + '">' + escapeHtml(rankText) + '</td>' +
                         '<td style="color:#f4e7cd;font-weight:600;">' + escapeHtml(player.nickname) + '</td>' +
                         '<td class="score-col" style="' + scoreStyle + ';font-size:1.1rem;font-weight:700;">' + player.score + '</td>' +
                         '<td class="' + title.class + '">' + escapeHtml(title.text) + '</td>' +

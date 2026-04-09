@@ -937,10 +937,118 @@ def settle_achievements_once():
     }
 
 
+def _calc_round_scores(p1_action, p2_action):
+    if p1_action == 'C' and p2_action == 'C':
+        return 3, 3
+    if p1_action == 'D' and p2_action == 'C':
+        return 8, -3
+    if p1_action == 'C' and p2_action == 'D':
+        return -3, 8
+    if p1_action == 'D' and p2_action == 'D':
+        return -1, -1
+    if p1_action is None and p2_action is not None:
+        return -5, (8 if p2_action == 'D' else 3)
+    if p2_action is None and p1_action is not None:
+        return (8 if p1_action == 'D' else 3), -5
+    return -5, -5
+
+
+def _settle_round_if_active(cursor, round_id: int) -> bool:
+    cursor.execute("SELECT status FROM rounds WHERE round_id = ?", (round_id,))
+    row = cursor.fetchone()
+    if not row or row["status"] != "active":
+        return False
+
+    cursor.execute("SELECT * FROM matches WHERE round_id = ?", (round_id,))
+    matches = cursor.fetchall()
+
+    for m in matches:
+        # 防止重复结算导致积分重复累加。
+        if (m["player1_score"] or 0) != 0 or (m["player2_score"] or 0) != 0:
+            continue
+
+        p1_id = m["player1_id"]
+        p2_id = m["player2_id"]
+        p1_action = m["player1_action"]
+        p2_action = m["player2_action"]
+
+        if p1_id == BOT_PLAYER_ID and p1_action is None:
+            p1_action = BOT_FIXED_ACTION
+            cursor.execute("UPDATE matches SET player1_action = ? WHERE match_id = ?", (p1_action, m["match_id"]))
+        if p2_id == BOT_PLAYER_ID and p2_action is None:
+            p2_action = BOT_FIXED_ACTION
+            cursor.execute("UPDATE matches SET player2_action = ? WHERE match_id = ?", (p2_action, m["match_id"]))
+
+        p1_score, p2_score = _calc_round_scores(p1_action, p2_action)
+        if IS_TEST_MODE:
+            p1_score *= 10
+            p2_score *= 10
+
+        cursor.execute(
+            "UPDATE matches SET player1_score = ?, player2_score = ? WHERE match_id = ?",
+            (p1_score, p2_score, m["match_id"]),
+        )
+        cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p1_score, p1_id))
+        cursor.execute("UPDATE players SET total_score = total_score + ? WHERE player_id = ?", (p2_score, p2_id))
+
+        process_feature_event(
+            cursor,
+            "match_resolved",
+            {
+                "round_id": round_id,
+                "match_id": m["match_id"],
+                "player1_id": p1_id,
+                "player2_id": p2_id,
+                "player1_action": p1_action,
+                "player2_action": p2_action,
+                "player1_score": p1_score,
+                "player2_score": p2_score,
+            },
+            round_id=round_id,
+        )
+
+    apply_submission_streak_and_auto_kick(cursor, round_id)
+    cursor.execute("UPDATE rounds SET status = 'completed' WHERE round_id = ?", (round_id,))
+    return True
+
+
+def _settle_overdue_active_rounds(cursor, now: datetime) -> int:
+    if is_maintenance_time(now):
+        return 0
+
+    round_info = get_current_round_info(now)
+    current_date = round_info["game_date"]
+    current_hour = int(round_info["hour"])
+
+    cursor.execute(
+        "SELECT round_id, game_date, hour, status FROM rounds WHERE status = 'active' ORDER BY round_id ASC"
+    )
+    active_rounds = cursor.fetchall()
+
+    settled_count = 0
+    for r in active_rounds:
+        game_date = r["game_date"]
+        hour = int(r["hour"])
+        is_past_round = (game_date < current_date) or (game_date == current_date and hour < current_hour)
+        is_current_due = (game_date == current_date and hour == current_hour and now.minute >= 31)
+        if is_past_round or is_current_due:
+            if _settle_round_if_active(cursor, int(r["round_id"])):
+                settled_count += 1
+
+    return settled_count
+
+
 @app.get("/api/scoreboard")
 def get_full_scoreboard():
     conn = get_db_connection()
     cursor = conn.cursor()
+    now = datetime.now()
+
+    settled_count = _settle_overdue_active_rounds(cursor, now)
+    if settled_count:
+        conn.commit()
+        LOGGER.info("Scoreboard auto-settled %s overdue round(s)", settled_count)
+
     # 前端全量数据同样只暴露 nickname
     cursor.execute("SELECT player_id, nickname, total_score, registered_at FROM players ORDER BY total_score DESC")
     player_rows = cursor.fetchall()
@@ -964,7 +1072,6 @@ def get_full_scoreboard():
             }
         )
     
-    now = datetime.now()
     round_info = get_current_round_info(now)
 
     cursor.execute(

@@ -644,6 +644,12 @@ body::after {
     animation: rainbowFlow 7s linear infinite;
 }
 
+.title-da-cong-ming {
+    color: #ff7a59;
+    font-weight: 800;
+    text-shadow: 0 0 10px rgba(255, 122, 89, 0.35);
+}
+
 .title-homarus { color: #ffb347; font-weight: 700; }
 .title-nephropidae { color: #c592ff; font-weight: 700; }
 .title-pleocyemata { color: #8fc2ff; font-weight: 700; }
