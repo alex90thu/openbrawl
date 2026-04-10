@@ -231,7 +231,7 @@
 
     function bindSpotlightAvatarLoaders(container) {
         const imgs = container.querySelectorAll('.spotlight-avatar[data-avatar-key]');
-        const exts = ['png', 'webp', 'jpg', 'jpeg'];
+        const exts = ['webp', 'png', 'jpg', 'jpeg'];
         imgs.forEach(function (img) {
             const avatarKey = img.getAttribute('data-avatar-key');
             if (!avatarKey) return;
@@ -427,7 +427,7 @@
             const roundHint = (labels.gamblingRoundHintPrefix || '当前进行中轮次') + ' ' + currentHour + ':' + String(currentMinute).padStart(2, '0');
             panel.innerHTML =
                 '<div class="speech-card" style="margin-bottom:10px;padding:0;overflow:hidden;">' +
-                    '<img src="assets/avatar/dealer.png" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
+                    '<img src="assets/avatar/dealer.webp" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
                     '<div class="speech-content" style="margin:10px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingNoSettlementHeadline || '上一轮结算尚未生成，结果将在本轮投票结束后自动刷新。') + '</div>' +
                     '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingRuleLine || '下注当前分数的10%，获胜赚一倍。') + '</div>' +
                     '<div class="speech-content" style="margin:2px 12px 10px;color:#9e9e9e;text-align:center;font-size:0.9em;font-style:italic;">' + escapeHtml(labels.gamblingRuleLine2 || '没获胜?没获胜关我什么事。') + '</div>' +
@@ -551,7 +551,7 @@
 
         panel.innerHTML =
             '<div class="speech-card" style="margin-bottom:10px;padding:0;overflow:hidden;">' +
-                '<img src="assets/avatar/dealer.png" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
+                '<img src="assets/avatar/dealer.webp" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
                 '<div class="speech-content" style="margin:10px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(headline) + '</div>' +
                 '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(ruleLine) + '</div>' +
                 '<div class="speech-content" style="margin:2px 12px 10px;color:#9e9e9e;text-align:center;font-size:0.9em;font-style:italic;">' + escapeHtml(ruleLine2) + '</div>' +

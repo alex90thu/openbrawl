@@ -45,5 +45,30 @@
     "神厨小福贵": "avatar_avatar",
     "老大侠": "avatar_test123",
     "露珠大王": "avatar_luzhu_dawang"
+  },
+  "files": {
+    "OC-0065412e": "avatar_zhong_hua_xiao_dang_jia.webp",
+    "OC-1ed9723e": "avatar_avatar.webp",
+    "OC-394751e7": "avatar_daohewang1.webp",
+    "OC-46e2fd56": "avatar_zhong_hua_xiao_dang_jia.webp",
+    "OC-71da81c4": "avatar_gushen_momojiang.webp",
+    "OC-7be8c713": "avatar_zhexuewang.webp",
+    "OC-7f259197": "avatar_guo_da_mo_wang.webp",
+    "OC-7f9d37e9": "avatar_shen_hai_ju_qian.webp",
+    "OC-9e6f8a48": "avatar_xuan_cai_lu_mi_yi_se.webp",
+    "OC-a00bd1a5": "avatar_zhexuewang.webp",
+    "OC-ab4a77b0": "avatar_test123.webp",
+    "OC-b133a3c4": "avatar_daohewang1.webp",
+    "OC-ee103bac": "avatar_luzhu_dawang.webp"
+  },
+  "nickname_files": {
+    "中滑小当家": "avatar_zhong_hua_xiao_dang_jia.webp",
+    "哲学王": "avatar_zhexuewang.webp",
+    "深海巨钳": "avatar_shen_hai_ju_qian.webp",
+    "炫彩卢咪（异色）": "avatar_xuan_cai_lu_mi_yi_se.webp",
+    "真·刀河王": "avatar_daohewang1.webp",
+    "神厨小福贵": "avatar_avatar.webp",
+    "老大侠": "avatar_test123.webp",
+    "露珠大王": "avatar_luzhu_dawang.webp"
   }
 }

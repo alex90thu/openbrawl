@@ -3,10 +3,14 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import io
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 try:
     from pypinyin import lazy_pinyin
@@ -20,8 +24,11 @@ AVATAR_MAP_FILE = PROJECT_ROOT / "data" / "avatar_map.json"
 GENERIC_AVATAR_KEYS = {"avatar", "avatar_", "avatar_avatar", "default", "unknown", "none", "null"}
 
 
+WEBP_QUALITY = int(os.getenv("OPENCLAW_AVATAR_WEBP_QUALITY", "82"))
+
+
 def _default_avatar_map() -> dict[str, dict[str, str]]:
-    return {"players": {}, "nicknames": {}}
+    return {"players": {}, "nicknames": {}, "files": {}, "nickname_files": {}}
 
 
 def load_avatar_map() -> dict[str, dict[str, str]]:
@@ -38,9 +45,13 @@ def load_avatar_map() -> dict[str, dict[str, str]]:
 
     players = raw.get("players") if isinstance(raw.get("players"), dict) else {}
     nicknames = raw.get("nicknames") if isinstance(raw.get("nicknames"), dict) else {}
+    files = raw.get("files") if isinstance(raw.get("files"), dict) else {}
+    nickname_files = raw.get("nickname_files") if isinstance(raw.get("nickname_files"), dict) else {}
     return {
         "players": {str(key): str(value) for key, value in players.items()},
         "nicknames": {str(key): str(value) for key, value in nicknames.items()},
+        "files": {str(key): str(value) for key, value in files.items()},
+        "nickname_files": {str(key): str(value) for key, value in nickname_files.items()},
     }
 
 
@@ -49,6 +60,8 @@ def save_avatar_map(avatar_map: dict[str, dict[str, str]]) -> None:
     payload = {
         "players": dict(sorted((avatar_map.get("players") or {}).items())),
         "nicknames": dict(sorted((avatar_map.get("nicknames") or {}).items())),
+        "files": dict(sorted((avatar_map.get("files") or {}).items())),
+        "nickname_files": dict(sorted((avatar_map.get("nickname_files") or {}).items())),
     }
     AVATAR_MAP_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -163,6 +176,14 @@ def sync_avatar_nickname_change(player_id: str, previous_nickname: str, new_nick
     if previous_nickname and previous_nickname in nicknames and nicknames[previous_nickname] == key:
         del nicknames[previous_nickname]
     nicknames[str(new_nickname)] = key
+
+    file_name = (avatar_map.get("files") or {}).get(str(player_id))
+    nickname_files = avatar_map.setdefault("nickname_files", {})
+    if previous_nickname and previous_nickname in nickname_files:
+        del nickname_files[previous_nickname]
+    if file_name:
+        nickname_files[str(new_nickname)] = str(file_name)
+
     save_avatar_map(avatar_map)
     return key
 
@@ -200,6 +221,19 @@ def decode_avatar_base64(avatar_base64: str) -> bytes:
         return base64.b64decode(raw)
 
 
+def convert_image_to_webp(image_bytes: bytes) -> bytes:
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        # Keep alpha channel when present, otherwise use RGB for better compression.
+        if img.mode in {"RGBA", "LA"} or (img.mode == "P" and "transparency" in img.info):
+            processed = img.convert("RGBA")
+        else:
+            processed = img.convert("RGB")
+
+        output = io.BytesIO()
+        processed.save(output, format="WEBP", quality=WEBP_QUALITY, method=6)
+        return output.getvalue()
+
+
 def store_avatar_image(
     image_bytes: bytes,
     avatar_key: str,
@@ -207,7 +241,9 @@ def store_avatar_image(
     replace_existing: bool = True,
 ) -> Path:
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)
-    ext = _guess_extension_from_filename(original_filename) or _guess_extension_from_bytes(image_bytes)
+    _ = _guess_extension_from_filename(original_filename) or _guess_extension_from_bytes(image_bytes)
+    image_bytes = convert_image_to_webp(image_bytes)
+    ext = "webp"
     avatar_key = normalize_avatar_key(avatar_key=avatar_key)
     target = AVATAR_DIR / f"{avatar_key}.{ext}"
 
@@ -221,6 +257,14 @@ def store_avatar_image(
     return target
 
 
+def bind_avatar_file(player_id: str, nickname: str, avatar_path: Path) -> None:
+    avatar_map = load_avatar_map()
+    file_name = avatar_path.name
+    avatar_map.setdefault("files", {})[str(player_id)] = file_name
+    avatar_map.setdefault("nickname_files", {})[str(nickname)] = file_name
+    save_avatar_map(avatar_map)
+
+
 def upsert_avatar_asset(
     player_id: str,
     nickname: str,
@@ -231,11 +275,69 @@ def upsert_avatar_asset(
     image_bytes = decode_avatar_base64(avatar_base64)
     key = bind_avatar(player_id, nickname, avatar_key=avatar_key)
     avatar_path = store_avatar_image(image_bytes, key, original_filename=original_filename)
+    bind_avatar_file(player_id, nickname, avatar_path)
     return {
         "player_id": player_id,
         "nickname": nickname,
         "avatar_key": key,
         "avatar_path": str(avatar_path),
+        "avatar_map_file": str(AVATAR_MAP_FILE),
+    }
+
+
+def _find_avatar_file_by_key(avatar_key: str) -> Path | None:
+    key = normalize_avatar_key(avatar_key=avatar_key)
+    for ext in ["webp", "png", "jpg", "jpeg", "gif"]:
+        candidate = AVATAR_DIR / f"{key}.{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def migrate_avatars_to_webp() -> dict[str, Any]:
+    avatar_map = load_avatar_map()
+    converted = 0
+    skipped = 0
+    failed = 0
+
+    players = avatar_map.get("players") or {}
+    nicknames = avatar_map.get("nicknames") or {}
+
+    for player_id, avatar_key in players.items():
+        source = _find_avatar_file_by_key(avatar_key)
+        if source is None:
+            skipped += 1
+            continue
+
+        if source.suffix.lower() == ".webp":
+            avatar_map.setdefault("files", {})[str(player_id)] = source.name
+            skipped += 1
+            continue
+
+        try:
+            webp_bytes = convert_image_to_webp(source.read_bytes())
+            target = AVATAR_DIR / f"{normalize_avatar_key(avatar_key=avatar_key)}.webp"
+            target.write_bytes(webp_bytes)
+            if source != target and source.exists():
+                source.unlink()
+            avatar_map.setdefault("files", {})[str(player_id)] = target.name
+            converted += 1
+        except Exception:
+            failed += 1
+
+    # Rebuild nickname -> file mapping from nickname -> avatar_key.
+    nickname_files = avatar_map.setdefault("nickname_files", {})
+    nickname_files.clear()
+    for nickname, avatar_key in nicknames.items():
+        found = _find_avatar_file_by_key(avatar_key)
+        if found:
+            nickname_files[str(nickname)] = found.name
+
+    save_avatar_map(avatar_map)
+    return {
+        "converted": converted,
+        "skipped": skipped,
+        "failed": failed,
         "avatar_map_file": str(AVATAR_MAP_FILE),
     }
 
@@ -261,6 +363,8 @@ def _main() -> int:
     sync.add_argument("--input", required=True, help="Path to the source image file")
     sync.add_argument("--avatar-key", default=None)
 
+    subparsers.add_parser("migrate-webp", help="Convert existing avatar assets to webp and update avatar map file links")
+
     args = parser.parse_args()
 
     if args.command == "preview":
@@ -276,6 +380,11 @@ def _main() -> int:
             original_filename=source.name,
             avatar_key=args.avatar_key,
         )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "migrate-webp":
+        result = migrate_avatars_to_webp()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 

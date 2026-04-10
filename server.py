@@ -977,6 +977,17 @@ def _settle_round_if_active(cursor, round_id: int) -> bool:
     cursor.execute("SELECT * FROM matches WHERE round_id = ?", (round_id,))
     matches = cursor.fetchall()
 
+    # Double-trigger settlement at round-close stage to avoid misses from mixed client versions.
+    try_record_votes_and_settle_gambling(
+        cursor,
+        round_id,
+        datetime.now(),
+        bot_player_id=BOT_PLAYER_ID,
+        bot_nickname=BOT_NICKNAME,
+        bot_fixed_action=BOT_FIXED_ACTION,
+        allow_incomplete_human_votes=True,
+    )
+
     for m in matches:
         # 防止重复结算导致积分重复累加。
         if (m["player1_score"] or 0) != 0 or (m["player2_score"] or 0) != 0:
@@ -1172,6 +1183,16 @@ async def background_scheduler():
                     cursor.execute("SELECT * FROM matches WHERE round_id = ?", (round_id,))
                     matches = cursor.fetchall()
 
+                    try_record_votes_and_settle_gambling(
+                        cursor,
+                        round_id,
+                        now,
+                        bot_player_id=BOT_PLAYER_ID,
+                        bot_nickname=BOT_NICKNAME,
+                        bot_fixed_action=BOT_FIXED_ACTION,
+                        allow_incomplete_human_votes=True,
+                    )
+
                     for m in matches:
                         p1_action = m["player1_action"]
                         p2_action = m["player2_action"]
@@ -1254,6 +1275,16 @@ async def background_scheduler():
                 round_id = round_row["round_id"]
                 cursor.execute("SELECT * FROM matches WHERE round_id = ?", (round_id,))
                 matches = cursor.fetchall()
+
+                try_record_votes_and_settle_gambling(
+                    cursor,
+                    round_id,
+                    now,
+                    bot_player_id=BOT_PLAYER_ID,
+                    bot_nickname=BOT_NICKNAME,
+                    bot_fixed_action=BOT_FIXED_ACTION,
+                    allow_incomplete_human_votes=True,
+                )
                 
                 for m in matches:
                     p1_action = m["player1_action"]

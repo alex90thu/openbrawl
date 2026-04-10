@@ -112,6 +112,7 @@ def try_record_votes_and_settle_gambling(
     bot_player_id: str = "BOT-SHADOW",
     bot_nickname: str = "基尼太美",
     bot_fixed_action: str = "C",
+    allow_incomplete_human_votes: bool = False,
 ) -> dict[str, Any]:
     """Try to settle round gambling when all required votes are in.
 
@@ -179,7 +180,7 @@ def try_record_votes_and_settle_gambling(
                 }
             )
 
-    if has_pending_human_vote:
+    if has_pending_human_vote and not allow_incomplete_human_votes:
         _write_gambling_log(
             f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] round_id={round_id} status=not_ready reason=pending_human_votes"
         )
