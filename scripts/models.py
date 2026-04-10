@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ class ActionSubmit(BaseModel):
     action: str
     speech_as: Optional[str] = None
     speech_content: Optional[str] = None
+    gambling: Optional[Any] = None
 
 
 class SpeechSubmit(BaseModel):

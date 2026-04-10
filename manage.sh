@@ -16,7 +16,13 @@ fi
 # ==========================================
 # 配置变量区
 # ==========================================
-PYTHON_CMD="${OPENCLAW_PYTHON_CMD:-python3}"
+if [ -n "$OPENCLAW_PYTHON_CMD" ]; then
+    PYTHON_CMD="$OPENCLAW_PYTHON_CMD"
+elif [ -x ".venv/bin/python" ]; then
+    PYTHON_CMD=".venv/bin/python"
+else
+    PYTHON_CMD="python3"
+fi
 
 
 # 后端 API 服务器配置
@@ -578,7 +584,7 @@ restart() {
     fi
 }
 
-# 新一轮游戏：备份数据库并重启
+# 新一轮游戏：备份数据库并重置赛季数据（保留玩家身份与指纹）
 new_game() {
     echo "=========================================="
     stop
@@ -588,8 +594,42 @@ new_game() {
         BASE=$(basename "$DB")
         if [ -f "$DB" ]; then
             cp "$DB" "data/records/${BASE}_$NOW"
-            : > "$DB"  # 清空原文件
-            echo "已备份并清空 $DB -> data/records/${BASE}_$NOW"
+            "$PYTHON_CMD" - "$DB" <<'PY'
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+
+cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+tables = {row[0] for row in cur.fetchall()}
+
+reset_tables = [
+    "matches",
+    "rounds",
+    "round_special_roles",
+    "round_speeches",
+    "round_public_speech",
+    "player_achievements",
+    "feature_event_log",
+    "player_round_gambling",
+    "round_vote_snapshots",
+    "gambling_round_settlements",
+    "fingerprint_bans",
+]
+
+for table_name in reset_tables:
+    if table_name in tables:
+        cur.execute(f"DELETE FROM {table_name}")
+
+if "players" in tables:
+    cur.execute("UPDATE players SET total_score = 0, miss_submit_streak = 0")
+
+conn.commit()
+conn.close()
+PY
+            echo "已备份并重置赛季数据(保留玩家/指纹): $DB -> data/records/${BASE}_$NOW"
         fi
     done
     start

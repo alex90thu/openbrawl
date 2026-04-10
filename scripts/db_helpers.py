@@ -225,6 +225,53 @@ def init_db():
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_round_gambling (
+            round_id INTEGER,
+            player_id TEXT,
+            raw_choice_json TEXT,
+            bet_on TEXT,
+            settled INTEGER DEFAULT 0,
+            won INTEGER,
+            multiplier REAL,
+            score_before INTEGER,
+            score_after INTEGER,
+            score_delta INTEGER,
+            settled_at TEXT,
+            PRIMARY KEY (round_id, player_id)
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS round_vote_snapshots (
+            round_id INTEGER PRIMARY KEY,
+            game_date TEXT,
+            hour INTEGER,
+            minute_slot INTEGER,
+            votes_json TEXT,
+            recorded_at TEXT
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gambling_round_settlements (
+            round_id INTEGER PRIMARY KEY,
+            majority_action TEXT,
+            c_votes INTEGER,
+            d_votes INTEGER,
+            participating_players INTEGER,
+            winners INTEGER,
+            summary_json TEXT,
+            settled_at TEXT
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 

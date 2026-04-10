@@ -63,6 +63,16 @@
         </div>
     </div>
 
+    <div class="speech-panel">
+        <div class="speech-head">
+            <h2 class="speech-title">赌博模组（本轮即时记录）</h2>
+            <span class="speech-hint">所有玩家投票完成后立即快照并结算</span>
+        </div>
+        <div id="gambling-panel" class="speech-wall">
+            <div class="speech-content" style="color:#bfb7a7;">等待本轮正式结算数据...</div>
+        </div>
+    </div>
+
     <div class="catalog-panel">
         <div class="catalog-head">
             <h2 class="catalog-title">🏆 成就手册</h2>
@@ -77,10 +87,10 @@
         * 榜单数据每 30 秒自动刷新一次。每日 08:00 - 10:00 为服务器维护期。
     </div>
 </div>
-<div id="version-badge" class="version-badge">版本 v1.5.0</div>
+<div id="version-badge" class="version-badge">版本 v1.6.0</div>
 
-<script src="runtime.config.js?v=1.5.0"></script>
-<script src="assets/js/leaderboard-app.js?v=1.5.0"></script>
+<script src="runtime.config.js?v=1.6.0"></script>
+<script src="assets/js/leaderboard-app.js?v=1.6.1"></script>
 <script>
     window.initLeaderboardPage({
         locale: 'zh',
@@ -100,6 +110,33 @@
         spotlightAchievementLabel: '成就修正',
         spotlightTotalLabel: '该轮净变化',
         spotlightAchievementNone: '无成就修正',
+        gamblingEmpty: '暂无已完成轮次的投票快照。',
+        gamblingRoundPrefix: '轮次',
+        gamblingMajorityLabel: '多数票',
+        gamblingSettlementPrefix: '赌博结算',
+        gamblingParticipantsLabel: '参与人数',
+        gamblingWinnersLabel: '猜中人数',
+        gamblingWinnerLine: '本轮赢家：',
+        gamblingTableTitle: '本轮所有玩家决策明细',
+        gamblingTablePlayer: '玩家',
+        gamblingTableDecision: '决策',
+        gamblingTableOutcome: '结果',
+        gamblingTableDelta: '分数变化',
+        gamblingOutcomeWin: '猜对',
+        gamblingOutcomeLose: '没猜对',
+        gamblingOutcomeSkip: '未下注',
+        gamblingNoWinners: '本轮无人猜中',
+        gamblingNoSettlementHeadline: '上一轮结算尚未生成，结果将在本轮投票结束后自动刷新。',
+        gamblingRoundHintPrefix: '当前进行中轮次',
+        gamblingNoSettlementRow: '等待结算',
+        gamblingBotTag: '机器人',
+        gamblingMajorityCooperate: '合作',
+        gamblingMajorityDefect: '背叛',
+        gamblingMajorityTie: '平票',
+        gamblingHeadlinePrefix: '上轮所有玩家的决策为',
+        gamblingHeadlineSuffix: '的玩家居多，你猜对了吗?',
+        gamblingRuleLine: '下注当前分数的10%，获胜赚一倍。',
+        gamblingRuleLine2: '没获胜?没获胜关我什么事。',
         spotlightActionC: '合作',
         spotlightActionD: '背叛',
         spotlightActionNone: '未提交',
@@ -117,7 +154,7 @@
         rankDecapoda: '🟢 算法小虾',
         rankMalacostraca: '🤍 萌新虾兵',
         rankTail: '💀 龙虾尾',
-        appVersion: '1.5.0'
+        appVersion: '1.6.0'
     });
 </script>
 </body>

@@ -31,6 +31,7 @@ from scripts.db_helpers import (
     submit_chaos_speech,
 )
 from scripts.features import FeatureEvent
+from scripts.gambling import save_player_gambling_choice, try_record_votes_and_settle_gambling
 from scripts.matchmaking import create_round_matches_if_needed, ensure_round_exists, try_pair_unmatched_players
 from scripts.models import ActionSubmit, AvatarUpdateRequest, FeatureEventRequest, NicknameUpdateRequest, RegisterRequest, SpeechSubmit
 from scripts.runtime import API_HOST, API_PORT, IS_TEST_MODE, SPEECH_DEADLINE_MINUTE
@@ -458,6 +459,16 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
             player_id=player_id,
         )
 
+    gambling_choice_info = save_player_gambling_choice(cursor, round_id, player_id, req.gambling)
+    gambling_settlement = try_record_votes_and_settle_gambling(
+        cursor,
+        round_id,
+        now,
+        bot_player_id=BOT_PLAYER_ID,
+        bot_nickname=BOT_NICKNAME,
+        bot_fixed_action=BOT_FIXED_ACTION,
+    )
+
     conn.commit()
     conn.close()
     
@@ -465,6 +476,10 @@ def submit_decision(req: ActionSubmit, player_id: str, secret_token: str = Heade
         "status": "success",
         "message": f"Decision '{req.action}' recorded at {submit_timestamp}.",
         "speech_status": speech_status,
+        "gambling": {
+            "choice": gambling_choice_info,
+            "round_settlement": gambling_settlement,
+        },
     }
 
 
@@ -1084,6 +1099,35 @@ def get_full_scoreboard():
         current_round_speeches = get_round_speeches(cursor, round_row["round_id"])
 
     spotlight_battle = build_previous_round_spotlight(cursor)
+
+    cursor.execute(
+        "SELECT round_id, votes_json, recorded_at FROM round_vote_snapshots ORDER BY round_id DESC LIMIT 1"
+    )
+    vote_snapshot_row = cursor.fetchone()
+    latest_round_vote_snapshot = None
+    if vote_snapshot_row:
+        try:
+            latest_round_vote_snapshot = json.loads(vote_snapshot_row["votes_json"])
+        except Exception:
+            latest_round_vote_snapshot = {
+                "round_id": vote_snapshot_row["round_id"],
+                "recorded_at": vote_snapshot_row["recorded_at"],
+                "votes": [],
+            }
+
+    cursor.execute(
+        "SELECT round_id, summary_json, settled_at FROM gambling_round_settlements ORDER BY round_id DESC LIMIT 1"
+    )
+    gambling_settlement_row = cursor.fetchone()
+    latest_gambling_settlement = None
+    if gambling_settlement_row:
+        try:
+            latest_gambling_settlement = json.loads(gambling_settlement_row["summary_json"])
+        except Exception:
+            latest_gambling_settlement = {
+                "round_id": gambling_settlement_row["round_id"],
+                "settled_at": gambling_settlement_row["settled_at"],
+            }
     
     conn.close()
     return {
@@ -1094,6 +1138,8 @@ def get_full_scoreboard():
         "players": all_players,
         "round_speeches": current_round_speeches,
         "spotlight_battle": spotlight_battle,
+        "latest_round_vote_snapshot": latest_round_vote_snapshot,
+        "latest_gambling_settlement": latest_gambling_settlement,
     }
 
 # ==========================================

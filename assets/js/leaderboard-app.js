@@ -103,7 +103,7 @@
     function renderVersionBadge(labels) {
         const badge = document.getElementById('version-badge');
         if (!badge) return;
-        const version = String(runtimeConfig.appVersion || labels.appVersion || '1.4.2').trim();
+        const version = String(labels.appVersion || runtimeConfig.appVersion || '1.4.2').trim();
         const prefix = String(labels.versionLabel || 'v').trim();
         badge.textContent = prefix + version;
     }
@@ -417,6 +417,162 @@
         bindSpotlightAvatarLoaders(container);
     }
 
+    function renderGamblingPanel(labels, voteSnapshot, gamblingSettlement, scoreboardMeta) {
+        const panel = document.getElementById('gambling-panel');
+        if (!panel) return;
+
+        if (!voteSnapshot || !Array.isArray(voteSnapshot.votes) || voteSnapshot.votes.length === 0) {
+            const currentHour = Number(scoreboardMeta && scoreboardMeta.current_round_hour) || 0;
+            const currentMinute = Number(scoreboardMeta && scoreboardMeta.current_round_minute) || 0;
+            const roundHint = (labels.gamblingRoundHintPrefix || '当前进行中轮次') + ' ' + currentHour + ':' + String(currentMinute).padStart(2, '0');
+            panel.innerHTML =
+                '<div class="speech-card" style="margin-bottom:10px;padding:0;overflow:hidden;">' +
+                    '<img src="assets/avatar/dealer.png" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
+                    '<div class="speech-content" style="margin:10px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingNoSettlementHeadline || '上一轮结算尚未生成，结果将在本轮投票结束后自动刷新。') + '</div>' +
+                    '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingRuleLine || '下注当前分数的10%，获胜赚一倍。') + '</div>' +
+                    '<div class="speech-content" style="margin:2px 12px 10px;color:#9e9e9e;text-align:center;font-size:0.9em;font-style:italic;">' + escapeHtml(labels.gamblingRuleLine2 || '没获胜?没获胜关我什么事。') + '</div>' +
+                '</div>' +
+                '<div class="speech-content" style="margin-bottom:10px;text-align:center;color:#d8cfbf;">' + escapeHtml(roundHint) + '</div>' +
+                '<div class="speech-content" style="margin-bottom:8px;text-align:center;color:#f2ddba;">' + escapeHtml(labels.gamblingTableTitle || '本轮所有玩家决策明细') + '</div>' +
+                '<table class="gambling-table" style="width:100%;border-collapse:collapse;margin:0 0 10px 0;">' +
+                    '<thead>' +
+                        '<tr>' +
+                            '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTablePlayer || '玩家') + '</th>' +
+                            '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableDecision || '决策') + '</th>' +
+                            '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableOutcome || '结果') + '</th>' +
+                            '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableDelta || '分数变化') + '</th>' +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody>' +
+                        '<tr>' +
+                            '<td style="padding:8px 10px;color:#bfb7a7;">-</td>' +
+                            '<td style="padding:8px 10px;color:#bfb7a7;">-</td>' +
+                            '<td style="padding:8px 10px;color:#bfb7a7;">' + escapeHtml(labels.gamblingNoSettlementRow || '等待结算') + '</td>' +
+                            '<td style="padding:8px 10px;text-align:right;color:#d8cfbf;">0</td>' +
+                        '</tr>' +
+                    '</tbody>' +
+                '</table>';
+            return;
+        }
+
+        const roundHour = Number(voteSnapshot.hour || 0);
+        const roundMinute = Number(voteSnapshot.minute_slot || 0) * 10;
+        const cVotes = Number((voteSnapshot.vote_counts && voteSnapshot.vote_counts.C) || 0);
+        const dVotes = Number((voteSnapshot.vote_counts && voteSnapshot.vote_counts.D) || 0);
+        const majority = gamblingSettlement && gamblingSettlement.majority_action ? String(gamblingSettlement.majority_action) : 'TIE';
+        const majorityWord = majority === 'C'
+            ? (labels.gamblingMajorityCooperate || '合作')
+            : (majority === 'D' ? (labels.gamblingMajorityDefect || '背叛') : (labels.gamblingMajorityTie || '平票'));
+
+        const decisionSummary = voteSnapshot.votes
+            .map(function (vote) {
+                const shortName = String(vote.nickname || vote.player_id || 'Unknown').slice(0, 8);
+                return shortName + ':' + String(vote.action || '-');
+            })
+            .join('、');
+
+        const headline = (labels.gamblingHeadlinePrefix || '上轮所有玩家的决策为') +
+            decisionSummary + '，' +
+            majorityWord +
+            (labels.gamblingHeadlineSuffix || '的玩家居多，你猜对了吗?');
+        const ruleLine = labels.gamblingRuleLine || '下注当前分数的10%，获胜赚一倍。';
+        const ruleLine2 = labels.gamblingRuleLine2 || '没获胜?没获胜关我什么事。';
+
+        const voteRows = voteSnapshot.votes
+            .map(function (vote) {
+                const name = escapeHtml(vote.nickname || vote.player_id || 'Unknown');
+                const action = escapeHtml(vote.action || labels.spotlightActionNone || 'No Submission');
+                const betText = vote.is_bot ? (labels.gamblingBotTag || 'BOT') : '';
+                return '<div class="speech-card"><div class="speech-speaker">' + name + ' ' + escapeHtml(betText) + '</div><div class="speech-content">Vote: ' + action + '</div></div>';
+            })
+            .join('');
+
+        const settlementRows = Array.isArray(gamblingSettlement && gamblingSettlement.players) ? gamblingSettlement.players : [];
+        const settlementByPlayerId = {};
+        settlementRows.forEach(function (row) {
+            const playerId = String(row.player_id || '').trim();
+            if (playerId) settlementByPlayerId[playerId] = row;
+        });
+
+        const tableRows = voteSnapshot.votes
+            .map(function (vote) {
+                const playerId = String(vote.player_id || '').trim();
+                const nick = String(vote.nickname || playerId || 'Unknown').trim();
+                const resultRow = settlementByPlayerId[playerId] || null;
+                const outcome = resultRow
+                    ? (resultRow.won ? (labels.gamblingOutcomeWin || '猜对') : (labels.gamblingOutcomeLose || '没猜对'))
+                    : (labels.gamblingOutcomeSkip || '未下注');
+                const delta = resultRow ? Number(resultRow.score_delta || 0) : 0;
+                const deltaText = delta > 0 ? '+' + delta : String(delta);
+                const deltaStyle = delta > 0
+                    ? 'color:#ff5b5b;'
+                    : (delta < 0 ? 'color:#39d98a;' : 'color:#d8cfbf;');
+                return (
+                    '<tr>' +
+                        '<td>' + escapeHtml(nick) + '</td>' +
+                        '<td>' + escapeHtml(vote.action || '-') + '</td>' +
+                        '<td>' + escapeHtml(outcome) + '</td>' +
+                        '<td style="text-align:right;' + deltaStyle + '">' + escapeHtml(deltaText) + '</td>' +
+                    '</tr>'
+                );
+            })
+            .join('');
+
+        let settlementLine = '';
+        if (gamblingSettlement) {
+            const participants = Number(gamblingSettlement.participating_players || 0);
+            const winners = Number(gamblingSettlement.winners || 0);
+            const winnerNicknames = Array.isArray(gamblingSettlement.winner_nicknames) ? gamblingSettlement.winner_nicknames : [];
+            const winnerLine = winnerNicknames.length > 0
+                ? winnerNicknames.join('、')
+                : (labels.gamblingNoWinners || '本轮无人猜中');
+            settlementLine = '<div class="speech-content" style="margin-bottom:10px;">' +
+                escapeHtml((labels.gamblingSettlementPrefix || 'Gambling settlement') + ': ') +
+                escapeHtml((labels.gamblingMajorityLabel || 'Majority') + ' ' + majority + ', ') +
+                escapeHtml((labels.gamblingParticipantsLabel || 'Participants') + ' ' + participants + ', ') +
+                escapeHtml((labels.gamblingWinnersLabel || 'Winners') + ' ' + winners) +
+                '</div>';
+
+            settlementLine += '<div class="speech-content" style="margin-bottom:10px;color:#f2ddba;text-align:center;">' +
+                escapeHtml((labels.gamblingWinnerLine || '本轮赢家：') + winnerLine) +
+                '</div>';
+        }
+
+        const rulesBlock =
+            '<div class="speech-content" style="margin-bottom:10px;text-align:center;">' +
+                escapeHtml((labels.gamblingRoundPrefix || 'Round') + ' ' + roundHour + ':' + String(roundMinute).padStart(2, '0')) +
+                ' | C=' + cVotes + ', D=' + dVotes +
+                ' | ' + escapeHtml((labels.gamblingMajorityLabel || 'Majority') + ': ' + majority) +
+            '</div>' +
+            settlementLine +
+            '<div class="speech-content" style="margin-bottom:8px;text-align:center;color:#f2ddba;">' +
+                escapeHtml(labels.gamblingTableTitle || '本轮所有玩家决策明细') +
+            '</div>';
+
+        panel.innerHTML =
+            '<div class="speech-card" style="margin-bottom:10px;padding:0;overflow:hidden;">' +
+                '<img src="assets/avatar/dealer.png" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
+                '<div class="speech-content" style="margin:10px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(headline) + '</div>' +
+                '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(ruleLine) + '</div>' +
+                '<div class="speech-content" style="margin:2px 12px 10px;color:#9e9e9e;text-align:center;font-size:0.9em;font-style:italic;">' + escapeHtml(ruleLine2) + '</div>' +
+            '</div>' +
+            rulesBlock +
+            '<table class="gambling-table" style="width:100%;border-collapse:collapse;margin:0 0 10px 0;">' +
+                '<thead>' +
+                    '<tr>' +
+                        '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTablePlayer || '玩家') + '</th>' +
+                        '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableDecision || '决策') + '</th>' +
+                        '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableOutcome || '结果') + '</th>' +
+                        '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.12);">' + escapeHtml(labels.gamblingTableDelta || '分数变化') + '</th>' +
+                    '</tr>' +
+                '</thead>' +
+                '<tbody>' +
+                    tableRows +
+                '</tbody>' +
+            '</table>' +
+            voteRows;
+    }
+
     async function fetchLeaderboard(labels) {
         try {
             const locale = labels.locale === 'en' ? 'en' : 'zh';
@@ -448,6 +604,10 @@
                 if (k) catalogByKey[k] = item;
             });
 
+            const players = Array.isArray(data.players)
+                ? data.players
+                : (data.players && typeof data.players === 'object' ? Object.values(data.players) : []);
+
             const statusEl = document.getElementById('server-status');
             if (statusEl) {
                 if (data.status === 'maintenance') {
@@ -473,16 +633,16 @@
             if (!tbody) return;
             tbody.innerHTML = '';
 
-            if (!Array.isArray(data.players) || data.players.length === 0) {
+            if (players.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="board-empty">' + escapeHtml(labels.noPlayers) + '</td></tr>';
             } else {
-                const midScoreRankByScore = buildBandRankMap(data.players, function (score) {
+                const midScoreRankByScore = buildBandRankMap(players, function (score) {
                     return score >= 101 && score <= 200;
                 });
-                const lowScoreRankByScore = buildBandRankMap(data.players, function (score) {
+                const lowScoreRankByScore = buildBandRankMap(players, function (score) {
                     return score <= 100;
                 });
-                data.players.forEach(function (player, index) {
+                players.forEach(function (player, index) {
                     const title = getTitleInfo(player.score, labels);
                     let rankText = String(index + 1);
                     if (player.score > 200) {
@@ -537,6 +697,15 @@
             }
 
             renderSpotlightBattle(labels, data.spotlight_battle || null, avatarMap);
+            renderGamblingPanel(
+                labels,
+                data.latest_round_vote_snapshot || null,
+                data.latest_gambling_settlement || null,
+                {
+                    current_round_hour: data.current_round_hour,
+                    current_round_minute: data.current_round_minute,
+                }
+            );
 
             const speechWall = document.getElementById('speech-wall');
             if (!speechWall) return;

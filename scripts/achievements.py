@@ -50,7 +50,7 @@ DEFAULT_ACHIEVEMENT_CATALOG = [
         "key": "chaos_orator",
         "name": "Chaos Orator",
         "description": "Submit a valid round speech. Can trigger repeatedly.",
-        "score_bonus": 12,
+        "score_bonus": 1,
         "trigger": {
             "event_type": "speech_submitted",
             "min_speech_content_length": 1,

@@ -63,6 +63,16 @@
         </div>
     </div>
 
+    <div class="speech-panel">
+        <div class="speech-head">
+            <h2 class="speech-title">Gambling Module (Immediate Round Snapshot)</h2>
+            <span class="speech-hint">Record votes and settle immediately once all players submit</span>
+        </div>
+        <div id="gambling-panel" class="speech-wall">
+            <div class="speech-content" style="color: #bfb7a7;">No completed-round vote snapshot yet.</div>
+        </div>
+    </div>
+
     <div class="catalog-panel">
         <div class="catalog-head">
             <h2 class="catalog-title">🏆 Achievement Catalog</h2>
@@ -77,10 +87,10 @@
         * Leaderboard refreshes every 30 seconds. Daily maintenance window: 08:00 - 10:00.
     </div>
 </div>
-<div id="version-badge" class="version-badge">Version v1.5.0</div>
+<div id="version-badge" class="version-badge">Version v1.6.0</div>
 
-<script src="runtime.config.js?v=1.5.0"></script>
-<script src="assets/js/leaderboard-app.js?v=1.5.0"></script>
+<script src="runtime.config.js?v=1.6.0"></script>
+<script src="assets/js/leaderboard-app.js?v=1.6.1"></script>
 <script>
     window.initLeaderboardPage({
         locale: 'en',
@@ -100,6 +110,33 @@
         spotlightAchievementLabel: 'Achievement Delta',
         spotlightTotalLabel: 'Round Net Delta',
         spotlightAchievementNone: 'No achievement adjustment',
+        gamblingEmpty: 'No completed-round vote snapshot yet.',
+        gamblingRoundPrefix: 'Round',
+        gamblingMajorityLabel: 'Majority',
+        gamblingSettlementPrefix: 'Gambling settlement',
+        gamblingParticipantsLabel: 'Participants',
+        gamblingWinnersLabel: 'Winners',
+        gamblingWinnerLine: 'Winning players: ',
+        gamblingTableTitle: 'Round decision details for all players',
+        gamblingTablePlayer: 'Player',
+        gamblingTableDecision: 'Decision',
+        gamblingTableOutcome: 'Result',
+        gamblingTableDelta: 'Score Change',
+        gamblingOutcomeWin: 'Won',
+        gamblingOutcomeLose: 'Lost',
+        gamblingOutcomeSkip: 'No Bet',
+        gamblingNoWinners: 'No winners this round',
+        gamblingNoSettlementHeadline: 'Previous-round settlement is not ready yet. Results will auto-refresh after this round closes.',
+        gamblingRoundHintPrefix: 'Current live round',
+        gamblingNoSettlementRow: 'Pending settlement',
+        gamblingBotTag: 'BOT',
+        gamblingMajorityCooperate: 'Cooperate',
+        gamblingMajorityDefect: 'Defect',
+        gamblingMajorityTie: 'Tie',
+        gamblingHeadlinePrefix: 'All players in the previous round voted',
+        gamblingHeadlineSuffix: 'as the majority. Did you call it right?',
+        gamblingRuleLine: 'Bet 10% of your current score. Win and earn 1x on that bet.',
+        gamblingRuleLine2: 'No win? Why should I care.',
         spotlightActionC: 'Cooperate',
         spotlightActionD: 'Defect',
         spotlightActionNone: 'No Submission',
@@ -117,7 +154,7 @@
         rankDecapoda: '⚪ Decapoda Ranger',
         rankMalacostraca: '🤍 Malacostraca Novice',
         rankTail: '💀 Lobster Tail',
-        appVersion: '1.5.0'
+        appVersion: '1.6.0'
     });
 </script>
 </body>
