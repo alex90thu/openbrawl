@@ -355,11 +355,215 @@ stop() {
 }
 
 status() {
-    echo "=========================================="
-    check_status "API 服务" "$API_PID_FILE"
-    check_status "API 测试服务" "$API_PID_FILE_TEST"
-    check_status "Web 前端服务" "$WEB_PID_FILE"
-    echo "=========================================="
+    local MODE="$1"
+    local DB_FILE="data/openclaw_game.db"
+    if [ "$MODE" = "test" ]; then
+        DB_FILE="data/openclaw_game.db2"
+    fi
+
+    OPENCLAW_STATUS_DB_FILE="$DB_FILE" \
+    OPENCLAW_STATUS_MODE="${MODE:-prod}" \
+    OPENCLAW_STATUS_API_PID_FILE="$API_PID_FILE" \
+    OPENCLAW_STATUS_API_TEST_PID_FILE="$API_PID_FILE_TEST" \
+    OPENCLAW_STATUS_WEB_PID_FILE="$WEB_PID_FILE" \
+    OPENCLAW_STATUS_PUBLIC_API_URL="$PUBLIC_API_URL" \
+    OPENCLAW_STATUS_WEB_PORT="$WEB_PORT" \
+    "$PYTHON_CMD" - <<'PY'
+import os
+import sqlite3
+import datetime as dt
+
+
+def pid_status(pid_file: str):
+    if not pid_file or not os.path.exists(pid_file):
+        return "未运行", "-"
+    try:
+        with open(pid_file, "r", encoding="utf-8") as f:
+            pid_text = f.read().strip()
+        pid = int(pid_text)
+        os.kill(pid, 0)
+        return "运行中", str(pid)
+    except Exception:
+        return "失效PID", pid_text if 'pid_text' in locals() else "-"
+
+
+def load_db_snapshot(db_path: str):
+    if not os.path.exists(db_path):
+        return {
+            "exists": False,
+            "players": [],
+            "active_round": None,
+            "leaderboard": [],
+        }
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("SELECT player_id, nickname, total_score, registered_at FROM players ORDER BY total_score DESC")
+    players = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT round_id, game_date, hour, minute_slot, status
+        FROM rounds
+        WHERE status = 'active'
+        ORDER BY round_id DESC
+        LIMIT 1
+        """
+    )
+    active_round = cur.fetchone()
+    if not active_round:
+        cur.execute(
+            """
+            SELECT round_id, game_date, hour, minute_slot, status
+            FROM rounds
+            ORDER BY round_id DESC
+            LIMIT 1
+            """
+        )
+        active_round = cur.fetchone()
+    active_round = dict(active_round) if active_round else None
+
+    cur.execute(
+        """
+        SELECT nickname, total_score
+        FROM players
+        ORDER BY total_score DESC, nickname ASC
+        LIMIT 10
+        """
+    )
+    leaderboard = [dict(r) for r in cur.fetchall()]
+
+    match_count = 0
+    speech_count = 0
+    if active_round:
+        rid = active_round["round_id"]
+        cur.execute("SELECT COUNT(*) AS c FROM matches WHERE round_id = ?", (rid,))
+        match_count = int(cur.fetchone()["c"])
+        cur.execute("SELECT COUNT(*) AS c FROM round_speeches WHERE round_id = ?", (rid,))
+        speech_count = int(cur.fetchone()["c"])
+
+    cur.execute("SELECT COUNT(*) AS c FROM rounds")
+    round_count = int(cur.fetchone()["c"])
+
+    conn.close()
+    return {
+        "exists": True,
+        "players": players,
+        "active_round": active_round,
+        "leaderboard": leaderboard,
+        "round_count": round_count,
+        "match_count": match_count,
+        "speech_count": speech_count,
+    }
+
+
+mode = os.getenv("OPENCLAW_STATUS_MODE", "prod")
+db_file = os.getenv("OPENCLAW_STATUS_DB_FILE", "data/openclaw_game.db")
+public_api_url = os.getenv("OPENCLAW_STATUS_PUBLIC_API_URL", "-")
+web_port = os.getenv("OPENCLAW_STATUS_WEB_PORT", "-")
+
+svc_rows = [
+    ("API 服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_PID_FILE", "")),
+    ("API 测试服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_TEST_PID_FILE", "")),
+    ("Web 前端服务",) + pid_status(os.getenv("OPENCLAW_STATUS_WEB_PID_FILE", "")),
+]
+
+snapshot = load_db_snapshot(db_file)
+now_text = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.columns import Columns
+
+    console = Console()
+
+    title = f"OpenClaw Status Dashboard [{mode}]"
+    subtitle = f"time={now_text} | db={db_file} | api={public_api_url} | web_port={web_port}"
+    console.print(Panel(subtitle, title=title, border_style="cyan"))
+
+    svc_table = Table(title="服务状态", expand=True)
+    svc_table.add_column("服务")
+    svc_table.add_column("状态")
+    svc_table.add_column("PID", justify="right")
+    for name, stat, pid in svc_rows:
+        color = "green" if stat == "运行中" else ("yellow" if stat == "失效PID" else "red")
+        svc_table.add_row(name, f"[{color}]{stat}[/{color}]", pid)
+
+    summary = Table(title="游戏概览", expand=True)
+    summary.add_column("项目")
+    summary.add_column("值")
+    summary.add_row("玩家数", str(len(snapshot.get("players", []))))
+    summary.add_row("轮次数", str(snapshot.get("round_count", 0)))
+    ar = snapshot.get("active_round")
+    if ar:
+        round_text = f"#{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})"
+    else:
+        round_text = "暂无轮次"
+    summary.add_row("当前轮次", round_text)
+    summary.add_row("本轮对局数", str(snapshot.get("match_count", 0)))
+    summary.add_row("本轮发言数", str(snapshot.get("speech_count", 0)))
+
+    board = Table(title="得分榜 Top 10", expand=True)
+    board.add_column("#", justify="right")
+    board.add_column("玩家")
+    board.add_column("总分", justify="right")
+    for i, p in enumerate(snapshot.get("leaderboard", []), 1):
+        board.add_row(str(i), str(p.get("nickname", "-")), str(p.get("total_score", 0)))
+    if not snapshot.get("leaderboard"):
+        board.add_row("-", "暂无玩家", "0")
+
+    player_table = Table(title="参与玩家", expand=True)
+    player_table.add_column("player_id")
+    player_table.add_column("nickname")
+    player_table.add_column("score", justify="right")
+    for p in snapshot.get("players", []):
+        player_table.add_row(
+            str(p.get("player_id", "-")),
+            str(p.get("nickname", "-")),
+            str(p.get("total_score", 0)),
+        )
+    if not snapshot.get("players"):
+        player_table.add_row("-", "暂无玩家", "0")
+
+    console.print(Columns([svc_table, summary]))
+    console.print(board)
+    console.print(player_table)
+
+except Exception:
+    print("==========================================")
+    print(f"OpenClaw Status [{mode}] @ {now_text}")
+    print(f"DB={db_file} | API={public_api_url} | WEB_PORT={web_port}")
+    print("------------------------------------------")
+    for name, stat, pid in svc_rows:
+        print(f"- {name}: {stat} (PID={pid})")
+    print("------------------------------------------")
+    print(f"玩家数: {len(snapshot.get('players', []))}")
+    print(f"轮次数: {snapshot.get('round_count', 0)}")
+    ar = snapshot.get("active_round")
+    if ar:
+        print(f"当前轮次: #{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})")
+    else:
+        print("当前轮次: 暂无")
+    print(f"本轮对局数: {snapshot.get('match_count', 0)}")
+    print(f"本轮发言数: {snapshot.get('speech_count', 0)}")
+    print("------------------------------------------")
+    print("得分榜 Top 10")
+    for i, p in enumerate(snapshot.get("leaderboard", []), 1):
+        print(f"{i:>2}. {p.get('nickname', '-')}  {p.get('total_score', 0)}")
+    if not snapshot.get("leaderboard"):
+        print("(暂无玩家)")
+    print("------------------------------------------")
+    print("参与玩家")
+    for p in snapshot.get("players", []):
+        print(f"- {p.get('player_id', '-')}: {p.get('nickname', '-')} ({p.get('total_score', 0)})")
+    if not snapshot.get("players"):
+        print("(暂无玩家)")
+    print("==========================================")
+PY
 }
 
 
@@ -631,7 +835,11 @@ case "$1" in
         fi
         ;;
     status)
-        status
+        if [ "$2" = "test" ]; then
+            status test
+        else
+            status
+        fi
         ;;
     new)
         new_game
@@ -676,7 +884,7 @@ case "$1" in
         echo "  $0 start [test]    - 启动所有服务（加 test 为测试模式）"
         echo "  $0 stop            - 停止所有服务"
         echo "  $0 restart [test]  - 重启所有服务（加 test 为测试模式）"
-        echo "  $0 status          - 查看运行状态"
+        echo "  $0 status [test]   - Rich 控制台查看运行状态/游戏概览/玩家榜单（可选 test）"
         echo "  $0 new             - 新一轮游戏（备份并重置数据库）"
         echo "  $0 tidy            - 一键迁移根目录遗留文件到 data/log/scripts"
         echo "  $0 genconfig       - 按 .ENV 生成 runtime.config.js"

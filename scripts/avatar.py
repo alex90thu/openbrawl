@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - fallback for environments without pypiny
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AVATAR_DIR = PROJECT_ROOT / "assets" / "avatar"
 AVATAR_MAP_FILE = PROJECT_ROOT / "data" / "avatar_map.json"
+GENERIC_AVATAR_KEYS = {"avatar", "avatar_", "avatar_avatar", "default", "unknown", "none", "null"}
 
 
 def _default_avatar_map() -> dict[str, dict[str, str]]:
@@ -82,6 +83,43 @@ def normalize_avatar_key(nickname: str | None = None, avatar_key: str | None = N
     return nickname_to_avatar_key(nickname or "")
 
 
+def _normalize_avatar_key_input(avatar_key: str | None) -> str | None:
+    raw = (avatar_key or "").strip()
+    if not raw:
+        return None
+    if raw.lower() in GENERIC_AVATAR_KEYS:
+        return None
+    normalized = normalize_avatar_key(avatar_key=raw)
+    if normalized.lower() in GENERIC_AVATAR_KEYS:
+        return None
+    return normalized
+
+
+def _allocate_unique_avatar_key(
+    base_key: str,
+    avatar_map: dict[str, dict[str, str]],
+    player_id: str | None = None,
+) -> str:
+    players_map = avatar_map.get("players") or {}
+    player_id = (player_id or "").strip()
+
+    # Same player keeps its existing mapping.
+    existing_for_player = players_map.get(player_id) if player_id else None
+    if existing_for_player:
+        return str(existing_for_player)
+
+    used_keys = {str(v) for v in players_map.values() if str(v).strip()}
+    if base_key not in used_keys:
+        return base_key
+
+    index = 2
+    while True:
+        candidate = f"{base_key}{index}"
+        if candidate not in used_keys:
+            return candidate
+        index += 1
+
+
 def resolve_avatar_key(player_id: str | None = None, nickname: str | None = None, avatar_map: dict[str, dict[str, str]] | None = None) -> str:
     amap = avatar_map or load_avatar_map()
     player_id = (player_id or "").strip()
@@ -101,8 +139,10 @@ def resolve_avatar_key(player_id: str | None = None, nickname: str | None = None
 
 
 def bind_avatar(player_id: str, nickname: str, avatar_key: str | None = None) -> str:
-    key = normalize_avatar_key(nickname=nickname, avatar_key=avatar_key)
     avatar_map = load_avatar_map()
+    provided = _normalize_avatar_key_input(avatar_key)
+    base_key = provided or nickname_to_avatar_key(nickname)
+    key = _allocate_unique_avatar_key(base_key, avatar_map, player_id=player_id)
     avatar_map.setdefault("players", {})[str(player_id)] = key
     avatar_map.setdefault("nicknames", {})[str(nickname)] = key
     save_avatar_map(avatar_map)
@@ -112,7 +152,10 @@ def bind_avatar(player_id: str, nickname: str, avatar_key: str | None = None) ->
 def sync_avatar_nickname_change(player_id: str, previous_nickname: str, new_nickname: str, avatar_key: str | None = None) -> str:
     key = resolve_avatar_key(player_id=player_id, nickname=previous_nickname)
     if avatar_key:
-        key = normalize_avatar_key(nickname=new_nickname, avatar_key=avatar_key)
+        provided = _normalize_avatar_key_input(avatar_key)
+        if provided:
+            avatar_map = load_avatar_map()
+            key = _allocate_unique_avatar_key(provided, avatar_map, player_id=player_id)
 
     avatar_map = load_avatar_map()
     avatar_map.setdefault("players", {})[str(player_id)] = key
@@ -198,7 +241,10 @@ def upsert_avatar_asset(
 
 
 def preview_avatar_key(nickname: str, avatar_key: str | None = None) -> str:
-    return normalize_avatar_key(nickname=nickname, avatar_key=avatar_key)
+    avatar_map = load_avatar_map()
+    provided = _normalize_avatar_key_input(avatar_key)
+    base_key = provided or nickname_to_avatar_key(nickname)
+    return _allocate_unique_avatar_key(base_key, avatar_map, player_id=None)
 
 
 def _main() -> int:
