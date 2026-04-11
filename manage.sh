@@ -372,22 +372,27 @@ stop() {
 
 status() {
     local MODE="$1"
+    local FOLLOW="$2"
     local DB_FILE="data/openclaw_game.db"
     if [ "$MODE" = "test" ]; then
         DB_FILE="data/openclaw_game.db2"
     fi
 
-    OPENCLAW_STATUS_DB_FILE="$DB_FILE" \
-    OPENCLAW_STATUS_MODE="${MODE:-prod}" \
-    OPENCLAW_STATUS_API_PID_FILE="$API_PID_FILE" \
-    OPENCLAW_STATUS_API_TEST_PID_FILE="$API_PID_FILE_TEST" \
-    OPENCLAW_STATUS_WEB_PID_FILE="$WEB_PID_FILE" \
-    OPENCLAW_STATUS_PUBLIC_API_URL="$PUBLIC_API_URL" \
-    OPENCLAW_STATUS_WEB_PORT="$WEB_PORT" \
-    "$PYTHON_CMD" - <<'PY'
+    render_status_snapshot() {
+        OPENCLAW_STATUS_DB_FILE="$DB_FILE" \
+        OPENCLAW_STATUS_MODE="${MODE:-prod}" \
+        OPENCLAW_STATUS_FOLLOW="$FOLLOW" \
+        OPENCLAW_STATUS_FOLLOW_INTERVAL="3" \
+        OPENCLAW_STATUS_API_PID_FILE="$API_PID_FILE" \
+        OPENCLAW_STATUS_API_TEST_PID_FILE="$API_PID_FILE_TEST" \
+        OPENCLAW_STATUS_WEB_PID_FILE="$WEB_PID_FILE" \
+        OPENCLAW_STATUS_PUBLIC_API_URL="$PUBLIC_API_URL" \
+        OPENCLAW_STATUS_WEB_PORT="$WEB_PORT" \
+        "$PYTHON_CMD" - <<'PY'
 import os
 import sqlite3
 import datetime as dt
+import time
 
 
 def pid_status(pid_file: str):
@@ -476,110 +481,142 @@ def load_db_snapshot(db_path: str):
 
 
 mode = os.getenv("OPENCLAW_STATUS_MODE", "prod")
+follow_mode = os.getenv("OPENCLAW_STATUS_FOLLOW", "0") == "1"
+follow_interval = float(os.getenv("OPENCLAW_STATUS_FOLLOW_INTERVAL", "3"))
 db_file = os.getenv("OPENCLAW_STATUS_DB_FILE", "data/openclaw_game.db")
 public_api_url = os.getenv("OPENCLAW_STATUS_PUBLIC_API_URL", "-")
 web_port = os.getenv("OPENCLAW_STATUS_WEB_PORT", "-")
 
-svc_rows = [
-    ("API 服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_PID_FILE", "")),
-    ("API 测试服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_TEST_PID_FILE", "")),
-    ("Web 前端服务",) + pid_status(os.getenv("OPENCLAW_STATUS_WEB_PID_FILE", "")),
-]
 
-snapshot = load_db_snapshot(db_file)
-now_text = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def collect_snapshot():
+    svc_rows = [
+        ("API 服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_PID_FILE", "")),
+        ("API 测试服务",) + pid_status(os.getenv("OPENCLAW_STATUS_API_TEST_PID_FILE", "")),
+        ("Web 前端服务",) + pid_status(os.getenv("OPENCLAW_STATUS_WEB_PID_FILE", "")),
+    ]
+    snapshot = load_db_snapshot(db_file)
+    now_text = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return svc_rows, snapshot, now_text
 
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.table import Table
     from rich.panel import Panel
     from rich.columns import Columns
+    from rich.live import Live
 
     console = Console()
 
-    title = f"OpenClaw Status Dashboard [{mode}]"
-    subtitle = f"time={now_text} | db={db_file} | api={public_api_url} | web_port={web_port}"
-    console.print(Panel(subtitle, title=title, border_style="cyan"))
+    def build_renderable():
+        svc_rows, snapshot, now_text = collect_snapshot()
+        title = f"OpenClaw Status Dashboard [{mode}]"
+        subtitle = f"time={now_text} | db={db_file} | api={public_api_url} | web_port={web_port}"
 
-    svc_table = Table(title="服务状态", expand=True)
-    svc_table.add_column("服务")
-    svc_table.add_column("状态")
-    svc_table.add_column("PID", justify="right")
-    for name, stat, pid in svc_rows:
-        color = "green" if stat == "运行中" else ("yellow" if stat == "失效PID" else "red")
-        svc_table.add_row(name, f"[{color}]{stat}[/{color}]", pid)
+        svc_table = Table(title="服务状态", expand=True)
+        svc_table.add_column("服务")
+        svc_table.add_column("状态")
+        svc_table.add_column("PID", justify="right")
+        for name, stat, pid in svc_rows:
+            color = "green" if stat == "运行中" else ("yellow" if stat == "失效PID" else "red")
+            svc_table.add_row(name, f"[{color}]{stat}[/{color}]", pid)
 
-    summary = Table(title="游戏概览", expand=True)
-    summary.add_column("项目")
-    summary.add_column("值")
-    summary.add_row("玩家数", str(len(snapshot.get("players", []))))
-    summary.add_row("轮次数", str(snapshot.get("round_count", 0)))
-    ar = snapshot.get("active_round")
-    if ar:
-        round_text = f"#{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})"
-    else:
-        round_text = "暂无轮次"
-    summary.add_row("当前轮次", round_text)
-    summary.add_row("本轮对局数", str(snapshot.get("match_count", 0)))
-    summary.add_row("本轮发言数", str(snapshot.get("speech_count", 0)))
+        summary = Table(title="游戏概览", expand=True)
+        summary.add_column("项目")
+        summary.add_column("值")
+        summary.add_row("玩家数", str(len(snapshot.get("players", []))))
+        summary.add_row("轮次数", str(snapshot.get("round_count", 0)))
+        ar = snapshot.get("active_round")
+        if ar:
+            round_text = f"#{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})"
+        else:
+            round_text = "暂无轮次"
+        summary.add_row("当前轮次", round_text)
+        summary.add_row("本轮对局数", str(snapshot.get("match_count", 0)))
+        summary.add_row("本轮发言数", str(snapshot.get("speech_count", 0)))
 
-    board = Table(title="得分榜 Top 10", expand=True)
-    board.add_column("#", justify="right")
-    board.add_column("玩家")
-    board.add_column("总分", justify="right")
-    for i, p in enumerate(snapshot.get("leaderboard", []), 1):
-        board.add_row(str(i), str(p.get("nickname", "-")), str(p.get("total_score", 0)))
-    if not snapshot.get("leaderboard"):
-        board.add_row("-", "暂无玩家", "0")
+        board = Table(title="得分榜 Top 10", expand=True)
+        board.add_column("#", justify="right")
+        board.add_column("玩家")
+        board.add_column("总分", justify="right")
+        for i, p in enumerate(snapshot.get("leaderboard", []), 1):
+            board.add_row(str(i), str(p.get("nickname", "-")), str(p.get("total_score", 0)))
+        if not snapshot.get("leaderboard"):
+            board.add_row("-", "暂无玩家", "0")
 
-    player_table = Table(title="参与玩家", expand=True)
-    player_table.add_column("player_id")
-    player_table.add_column("nickname")
-    player_table.add_column("score", justify="right")
-    for p in snapshot.get("players", []):
-        player_table.add_row(
-            str(p.get("player_id", "-")),
-            str(p.get("nickname", "-")),
-            str(p.get("total_score", 0)),
+        player_table = Table(title="参与玩家", expand=True)
+        player_table.add_column("player_id")
+        player_table.add_column("nickname")
+        player_table.add_column("score", justify="right")
+        for p in snapshot.get("players", []):
+            player_table.add_row(
+                str(p.get("player_id", "-")),
+                str(p.get("nickname", "-")),
+                str(p.get("total_score", 0)),
+            )
+        if not snapshot.get("players"):
+            player_table.add_row("-", "暂无玩家", "0")
+
+        follow_hint = Panel(
+            f"status --follow 增量渲染中 | refresh={follow_interval:.0f}s | Ctrl+C 退出",
+            border_style="magenta",
         )
-    if not snapshot.get("players"):
-        player_table.add_row("-", "暂无玩家", "0")
 
-    console.print(Columns([svc_table, summary]))
-    console.print(board)
-    console.print(player_table)
+        return Group(
+            Panel(subtitle, title=title, border_style="cyan"),
+            Columns([svc_table, summary]),
+            board,
+            player_table,
+            follow_hint if follow_mode else Panel("单次快照模式", border_style="dim"),
+        )
+
+    if follow_mode:
+        with Live(build_renderable(), refresh_per_second=4, screen=True) as live:
+            while True:
+                time.sleep(max(0.5, follow_interval))
+                live.update(build_renderable())
+    else:
+        console.print(build_renderable())
 
 except Exception:
-    print("==========================================")
-    print(f"OpenClaw Status [{mode}] @ {now_text}")
-    print(f"DB={db_file} | API={public_api_url} | WEB_PORT={web_port}")
-    print("------------------------------------------")
-    for name, stat, pid in svc_rows:
-        print(f"- {name}: {stat} (PID={pid})")
-    print("------------------------------------------")
-    print(f"玩家数: {len(snapshot.get('players', []))}")
-    print(f"轮次数: {snapshot.get('round_count', 0)}")
-    ar = snapshot.get("active_round")
-    if ar:
-        print(f"当前轮次: #{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})")
-    else:
-        print("当前轮次: 暂无")
-    print(f"本轮对局数: {snapshot.get('match_count', 0)}")
-    print(f"本轮发言数: {snapshot.get('speech_count', 0)}")
-    print("------------------------------------------")
-    print("得分榜 Top 10")
-    for i, p in enumerate(snapshot.get("leaderboard", []), 1):
-        print(f"{i:>2}. {p.get('nickname', '-')}  {p.get('total_score', 0)}")
-    if not snapshot.get("leaderboard"):
-        print("(暂无玩家)")
-    print("------------------------------------------")
-    print("参与玩家")
-    for p in snapshot.get("players", []):
-        print(f"- {p.get('player_id', '-')}: {p.get('nickname', '-')} ({p.get('total_score', 0)})")
-    if not snapshot.get("players"):
-        print("(暂无玩家)")
-    print("==========================================")
+    # Fallback: plain text mode when Rich is unavailable.
+    while True:
+        svc_rows, snapshot, now_text = collect_snapshot()
+        print("==========================================")
+        print(f"OpenClaw Status [{mode}] @ {now_text}")
+        print(f"DB={db_file} | API={public_api_url} | WEB_PORT={web_port}")
+        print("------------------------------------------")
+        for name, stat, pid in svc_rows:
+            print(f"- {name}: {stat} (PID={pid})")
+        print("------------------------------------------")
+        print(f"玩家数: {len(snapshot.get('players', []))}")
+        print(f"轮次数: {snapshot.get('round_count', 0)}")
+        ar = snapshot.get("active_round")
+        if ar:
+            print(f"当前轮次: #{ar['round_id']} {ar['game_date']} {int(ar['hour']):02d}:{int(ar['minute_slot']) * 10:02d} ({ar['status']})")
+        else:
+            print("当前轮次: 暂无")
+        print(f"本轮对局数: {snapshot.get('match_count', 0)}")
+        print(f"本轮发言数: {snapshot.get('speech_count', 0)}")
+        print("------------------------------------------")
+        print("得分榜 Top 10")
+        for i, p in enumerate(snapshot.get("leaderboard", []), 1):
+            print(f"{i:>2}. {p.get('nickname', '-')}  {p.get('total_score', 0)}")
+        if not snapshot.get("leaderboard"):
+            print("(暂无玩家)")
+        print("------------------------------------------")
+        print("参与玩家")
+        for p in snapshot.get("players", []):
+            print(f"- {p.get('player_id', '-')}: {p.get('nickname', '-')} ({p.get('total_score', 0)})")
+        if not snapshot.get("players"):
+            print("(暂无玩家)")
+        print("==========================================")
+        if not follow_mode:
+            break
+        time.sleep(max(0.5, follow_interval))
 PY
+    }
+
+    render_status_snapshot
 }
 
 
@@ -861,6 +898,101 @@ kick_player() {
     return 1
 }
 
+manual_register_player() {
+    local NICKNAME="$1"
+    local MODE="$2"
+    local DB_FILE="data/openclaw_game.db"
+    if [ "$MODE" = "test" ]; then
+        DB_FILE="data/openclaw_game.db2"
+    fi
+
+    if [ -z "$NICKNAME" ]; then
+        echo "用法: $0 register <nickname> [test]"
+        return 1
+    fi
+
+    if [ ! -f "$DB_FILE" ]; then
+        echo "❌ 数据库不存在: $DB_FILE"
+        return 1
+    fi
+
+    local RETRIES=6
+    local BASE_DELAY=1
+    local TRY
+
+    for TRY in $(seq 1 "$RETRIES"); do
+        local RESULT
+        if RESULT=$(OPENCLAW_DB_PATH="$DB_FILE" OPENCLAW_NICKNAME_INPUT="$NICKNAME" "$PYTHON_CMD" - <<'PY' 2>&1
+import os
+import secrets
+import sqlite3
+from datetime import datetime
+
+db_path = os.environ["OPENCLAW_DB_PATH"]
+nickname = os.environ["OPENCLAW_NICKNAME_INPUT"].strip()[:20]
+if not nickname:
+    print("ERROR|nickname cannot be empty")
+    raise SystemExit(2)
+
+conn = sqlite3.connect(db_path, timeout=8)
+try:
+    cur = conn.cursor()
+    cur.execute("PRAGMA busy_timeout = 8000")
+
+    while True:
+        player_id = f"OC-{secrets.token_hex(4)}"
+        cur.execute("SELECT 1 FROM players WHERE player_id = ?", (player_id,))
+        if cur.fetchone() is None:
+            break
+
+    secret_token = secrets.token_hex(16)
+    registered_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cur.execute(
+        """
+        INSERT INTO players (player_id, nickname, secret_token, fingerprint, nickname_change_count, total_score, registered_at)
+        VALUES (?, ?, ?, NULL, 0, 0, ?)
+        """,
+        (player_id, nickname, secret_token, registered_at),
+    )
+    conn.commit()
+    print("OK|{}|{}|{}|{}".format(player_id, nickname, secret_token, registered_at))
+finally:
+    conn.close()
+PY
+); then
+            if [[ "$RESULT" == OK\|* ]]; then
+                IFS='|' read -r _ PLAYER_ID SAFE_NICKNAME SECRET_TOKEN REGISTERED_AT <<< "$RESULT"
+                echo "=========================================="
+                echo "✅ 手动注册成功"
+                echo "📁 数据库: $DB_FILE"
+                echo "🆔 player_id: $PLAYER_ID"
+                echo "🙂 nickname: $SAFE_NICKNAME"
+                echo "🔐 secret_token: $SECRET_TOKEN"
+                echo "🧬 fingerprint: (空，首次认证请求自动绑定)"
+                echo "🕒 registered_at: $REGISTERED_AT"
+                echo "=========================================="
+                return 0
+            fi
+            echo "$RESULT"
+            return 1
+        fi
+
+        if echo "$RESULT" | grep -q "database is locked"; then
+            local SLEEP_SEC=$((BASE_DELAY * TRY))
+            echo "⚠️  手动注册遇到写锁（第${TRY}/${RETRIES}次），${SLEEP_SEC}s 后重试..."
+            sleep "$SLEEP_SEC"
+            continue
+        fi
+
+        echo "❌ 手动注册失败：$RESULT"
+        return 1
+    done
+
+    echo "❌ 手动注册失败：数据库持续写锁。建议先 ./manage.sh stop 后再注册，完成后 ./manage.sh start"
+    return 1
+}
+
 # ==========================================
 # 脚本入口与参数解析
 # ==========================================
@@ -885,11 +1017,23 @@ case "$1" in
         fi
         ;;
     status)
-        if [ "$2" = "test" ]; then
-            status test
-        else
-            status
-        fi
+        STATUS_MODE=""
+        STATUS_FOLLOW="0"
+        for arg in "${@:2}"; do
+            case "$arg" in
+                test)
+                    STATUS_MODE="test"
+                    ;;
+                --follow|-f)
+                    STATUS_FOLLOW="1"
+                    ;;
+                *)
+                    echo "用法: $0 status [test] [--follow|-f]"
+                    exit 1
+                    ;;
+            esac
+        done
+        status "$STATUS_MODE" "$STATUS_FOLLOW"
         ;;
     new)
         new_game
@@ -921,6 +1065,17 @@ case "$1" in
             kick_player "$2"
         fi
         ;;
+    register)
+        if [ "$3" = "test" ] || [ "$2" = "test" ]; then
+            if [ "$2" = "test" ]; then
+                echo "用法: $0 register <nickname> [test]"
+                exit 1
+            fi
+            manual_register_player "$2" test
+        else
+            manual_register_player "$2"
+        fi
+        ;;
 
     broadcast)
         if [ $# -lt 3 ]; then
@@ -934,13 +1089,14 @@ case "$1" in
         echo "  $0 start [test]    - 启动所有服务（加 test 为测试模式）"
         echo "  $0 stop            - 停止所有服务"
         echo "  $0 restart [test]  - 重启所有服务（加 test 为测试模式）"
-        echo "  $0 status [test]   - Rich 控制台查看运行状态/游戏概览/玩家榜单（可选 test）"
+        echo "  $0 status [test] [--follow|-f] - Rich 控制台查看运行状态/游戏概览/玩家榜单（可选 test；--follow 自动刷新）"
         echo "  $0 new             - 新一轮游戏（备份并重置数据库）"
         echo "  $0 tidy            - 一键迁移根目录遗留文件到 data/log/scripts"
         echo "  $0 genconfig       - 按 .ENV 生成 runtime.config.js"
         echo "  $0 doctor          - 检查 .ENV、关键文件、端口和运行状态"
         echo "  $0 roundstats [test] [player_id] - 打印本轮+历史动作统计；可附带玩家ID查看该玩家全历史动作"
         echo "  $0 kick <player_id|nickname> [test] - 手动踢出玩家并删除关联对局"
+        echo "  $0 register <nickname> [test] - 手动注册玩家（直写数据库，返回 player_id + secret_token）"
         echo "  $0 broadcast <type> <content> - 发送服务器广播包"
         exit 1
         ;;
