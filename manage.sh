@@ -13,16 +13,33 @@ elif [ -f ".env" ]; then
     set +a
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # ==========================================
 # 配置变量区
 # ==========================================
-if [ -n "$OPENCLAW_PYTHON_CMD" ]; then
-    PYTHON_CMD="$OPENCLAW_PYTHON_CMD"
-elif [ -x ".venv/bin/python" ]; then
-    PYTHON_CMD=".venv/bin/python"
-else
-    PYTHON_CMD="python3"
-fi
+resolve_python_cmd() {
+    local configured_cmd="${OPENCLAW_PYTHON_CMD:-}"
+    local venv_cmd=".venv/bin/python"
+
+    if [ -n "$configured_cmd" ]; then
+        PYTHON_CMD="$configured_cmd"
+    elif [ -x "$venv_cmd" ]; then
+        PYTHON_CMD="$venv_cmd"
+    else
+        PYTHON_CMD="python3"
+    fi
+
+    # API requires uvicorn. If current interpreter misses it, fallback to local venv.
+    if ! "$PYTHON_CMD" -c "import uvicorn" >/dev/null 2>&1; then
+        if [ -x "$venv_cmd" ] && "$venv_cmd" -c "import uvicorn" >/dev/null 2>&1; then
+            echo "⚠️  当前 Python ($PYTHON_CMD) 缺少 uvicorn，自动切换到 $venv_cmd"
+            PYTHON_CMD="$venv_cmd"
+        fi
+    fi
+}
+
+resolve_python_cmd
 
 
 # 后端 API 服务器配置
@@ -44,7 +61,7 @@ API_PORT="${OPENCLAW_API_PORT}"
 API_SCHEME="${OPENCLAW_API_SCHEME:-http}"
 API_HOST_PUBLIC="${OPENCLAW_API_PUBLIC_HOST:-127.0.0.1}"
 PUBLIC_API_URL="${OPENCLAW_PUBLIC_API_URL:-${API_SCHEME}://${API_HOST_PUBLIC}:${API_PORT}}"
-APP_VERSION="${OPENCLAW_APP_VERSION:-1.6.0}"
+APP_VERSION="${OPENCLAW_APP_VERSION:-1.6.2}"
 RUNTIME_CONFIG_FILE="runtime.config.js"
 
 if [ -z "$API_PORT" ] || [ -z "$WEB_PORT" ]; then
@@ -224,13 +241,6 @@ doctor() {
 
     echo "------------------------------------------"
     echo "【HTTP 连通性】"
-    if curl -fsS -m 5 "http://127.0.0.1:${API_PORT}/health" >/dev/null 2>&1; then
-        echo "✅ 本机 Health 可访问: http://127.0.0.1:${API_PORT}/health"
-    else
-        echo "❌ 本机 Health 不可访问: http://127.0.0.1:${API_PORT}/health"
-        failed=1
-    fi
-
     if curl -fsS -m 5 "$PUBLIC_API_URL/api/scoreboard" >/dev/null 2>&1; then
         echo "✅ PUBLIC_API_URL 可访问: $PUBLIC_API_URL/api/scoreboard"
     else
@@ -345,8 +355,8 @@ start() {
         start_service "API 服务" "$PYTHON_CMD $API_APP" "$API_LOG" "$API_PID_FILE"
         echo "▶️ API 日志: tail -f $API_LOG"
     fi
-    # 使用 Python 内置的 http.server 挂载当前目录的网页
-    start_service "Web 前端服务 (端口 $WEB_PORT)" "$PYTHON_CMD -m http.server $WEB_PORT" "$WEB_LOG" "$WEB_PID_FILE"
+    # 固定挂载脚本所在目录，避免从其它工作目录启动时静态资源路径丢失。
+    start_service "Web 前端服务 (端口 $WEB_PORT)" "$PYTHON_CMD -m http.server $WEB_PORT --bind 0.0.0.0 --directory $SCRIPT_DIR" "$WEB_LOG" "$WEB_PID_FILE"
     echo "=========================================="
     echo "▶️ Web 日志: tail -f $WEB_LOG"
 }

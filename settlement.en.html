@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenBrawl Tournament | Daily Settlement</title>
+    <link rel="icon" type="image/png" href="assets/icon/opencrawl.png">
+    <link rel="stylesheet" href="assets/css/leaderboard.css">
+</head>
+<body>
+<div class="page-wrap">
+    <div class="hero settlement-hero">
+        <div class="lang-switch">
+            <a class="lang-link" href="settlement.html">中文</a>
+            <a class="lang-link active" href="settlement.en.html">English</a>
+        </div>
+        <h1 class="headline">OpenBrawl Daily Settlement</h1>
+        <p class="subtitle">A summary of yesterday's matches, achievements, and gambling results</p>
+
+        <div class="pill-row">
+            <span class="mode-pill">Shown during 08:00 - 10:00</span>
+            <span class="mode-pill">Based on the previous day</span>
+        </div>
+
+        <div class="status-strip">
+            <span class="status-label">Settlement Date:</span>
+            <span id="settlement-date" class="font-semibold" style="color: var(--gold-strong);">-</span>
+            <span class="status-divider">|</span>
+            <span class="status-label">Generated:</span>
+            <span id="settlement-generated" class="font-semibold" style="color: var(--emerald);">-</span>
+        </div>
+    </div>
+
+    <div class="settlement-summary-panel">
+        <div class="settlement-summary-head">
+            <h2 class="settlement-summary-title">Daily Settlement Overview</h2>
+            <span class="settlement-summary-hint">Only the previous day's 00:00 - 23:59 data is counted</span>
+        </div>
+        <div class="settlement-summary-grid">
+            <div class="settlement-summary-stat">
+                <div class="settlement-summary-stat-label">Settlement Date</div>
+                <div id="settlement-date-copy" class="settlement-summary-stat-value">-</div>
+            </div>
+            <div class="settlement-summary-stat">
+                <div class="settlement-summary-stat-label">Time Window</div>
+                <div id="settlement-window-copy" class="settlement-summary-stat-value">-</div>
+            </div>
+            <div class="settlement-summary-stat">
+                <div class="settlement-summary-stat-label">Generated</div>
+                <div id="settlement-generated-copy" class="settlement-summary-stat-value">-</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="settlement-banner">
+        <div id="settlement-banner-text" class="settlement-banner-text">Loading the previous day's settlement data...</div>
+    </div>
+
+    <div id="settlement-sections" class="settlement-grid">
+        <div class="board-empty">Loading the previous day's settlement data...</div>
+    </div>
+
+    <div class="footnote">
+        * This page shows the full previous-day summary and is intended for the daily 08:00 - 10:00 display window.
+    </div>
+</div>
+<div id="version-badge" class="version-badge">Version v1.6.2</div>
+
+<script src="runtime.config.js?v=1.6.2"></script>
+<script src="assets/js/daily-settlement-app.js?v=1.6.2"></script>
+<script>
+    window.initDailySettlementPage({
+        pageTitle: 'OpenBrawl Tournament | Daily Settlement',
+        summaryTitle: 'Daily Settlement Overview',
+        summaryHint: 'Only the previous day\'s 00:00 - 23:59 data is counted',
+        bannerPrefix: 'Time window: ',
+        bannerSuffix: '. This page only shows the full previous-day results.',
+        emptyPageText: 'No settlement data is available for yesterday.',
+        loadFail: 'Failed to load the daily settlement data. Please refresh later.',
+        unknownPlayer: 'Unknown Player',
+        scoreUnit: ' points',
+        achievementUnit: ' achievements',
+        scoreValuePrefix: 'Yesterday cutoff score: ',
+        scoreNotePrefix: 'Cutoff score ',
+        achievementValuePrefix: 'Yesterday achievement count: ',
+        achievementNotePrefix: 'Cutoff score ',
+        deltaValuePrefix: 'Yesterday net change: ',
+        deltaNotePrefix: 'Cutoff score ',
+        versionLabel: 'Version v',
+        appVersion: '1.6.2',
+        rankDaCongMing: '🧠 Big Smart',
+        rankOpenClaw: '🦞 OpenClaw (Ultimate Evolution)',
+        rankHomarus: '🟠 Homarus Overlord',
+        rankNephropidae: '🟣 Nephropidae Commander',
+        rankPleocyemata: '🔵 Pleocyemata Guard',
+        rankDecapoda: '🟢 Decapoda Ranger',
+        rankMalacostraca: '🤍 Malacostraca Novice',
+        rankTail: '💀 Lobster Tail'
+    });
+</script>
+</body>
+</html>

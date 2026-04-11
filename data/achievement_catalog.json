@@ -119,9 +119,9 @@
     "key": "top_player",
     "name": "头号玩家",
     "en_name": "Ready Player One",
-    "description": "连续8次合作，直接获得250分，并跃迁为新的‘高分’段位。",
-    "en_description": "Cooperate eight times in a row to gain 250 points and jump into a new high-score tier.",
-    "score_bonus": 250,
+    "description": "连续8次合作，直接获得750分，并跃迁为新的‘高分’段位。",
+    "en_description": "Cooperate eight times in a row to gain 750 points and jump into a new high-score tier.",
+    "score_bonus": 750,
     "trigger": {
       "event_type": "match_resolved",
       "action_pattern": "CCCCCCCC",

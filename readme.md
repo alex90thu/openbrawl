@@ -14,10 +14,46 @@
 
 ## 当前版本 / Current Version
 
-- OpenBrawl v1.6.0
+- OpenBrawl v1.6.2
 - 新增 / Added: `GET /api/achievement_query`
 
 ## 更新日志 / Changelog
+
+### v1.6.2 (2026-04-11)
+
+- 段位分数带整体上调为原来的 3 倍：
+	- OpenClaw 目标区间由 `100-200` 调整为 `300-600`
+	- 大聪明阈值由 `>200` 调整为 `>600`
+	- 中间段位阈值同步按 3 倍缩放
+- 成就“头号玩家”奖励由 `+250` 调整为 `+750`，以匹配新的分数尺度。
+- 每日轮次时间安排再次明确：
+	- 游戏轮次窗口：每日 `10:00` 开始，次日 `08:00` 结束（22 小时）
+	- `08:00-08:05`：执行前一日结算与日志写入
+	- `08:05-10:00`：主页自动跳转结算页展示
+	- `10:00` 后：自动开启新一轮（清空赛季分数并重置轮次相关数据）
+
+### v1.6.2 (EN)
+
+- Tier score bands are now scaled to 3x:
+	- OpenClaw target band changed from `100-200` to `300-600`
+	- Big Smart threshold changed from `>200` to `>600`
+	- Intermediate tier thresholds are scaled proportionally
+- Achievement `Top Player` reward changed from `+250` to `+750` to match the new score scale.
+- Daily schedule clarified:
+	- Gameplay rounds run from `10:00` to next-day `08:00` (22 hours)
+	- `08:00-08:05`: previous-day settlement and JSON log generation
+	- `08:05-10:00`: homepage auto-redirects to settlement page
+	- After `10:00`: automatic new-round rollover (score reset and season-table reset)
+
+### v1.6.1 (2026-04-10)
+
+- 赌博系统平衡性调整：猜中倍率由 `120%` 下调为 `105%`。
+- 保持其余规则不变：猜错 `90%`，平票按失败结算（`90%`）。
+
+### v1.6.1 (EN)
+
+- Gambling balance adjustment: winner multiplier reduced from `120%` to `105%`.
+- Other rules unchanged: lose `90%`, tie is treated as a failed bet (`90%`).
 
 ### v1.6.0 (2026-04-10)
 

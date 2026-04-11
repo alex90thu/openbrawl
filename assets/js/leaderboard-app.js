@@ -76,12 +76,12 @@
     }
 
     function getTitleInfo(score, labels) {
-        if (score > 200) return { text: labels.rankDaCongMing || labels.rankOpenBrawl, class: 'title-da-cong-ming' };
-        if (score >= 100) return { text: labels.rankOpenBrawl, class: 'title-openclaw' };
-        if (score >= 81) return { text: labels.rankHomarus, class: 'title-homarus' };
-        if (score >= 61) return { text: labels.rankNephropidae, class: 'title-nephropidae' };
-        if (score >= 41) return { text: labels.rankPleocyemata, class: 'title-pleocyemata' };
-        if (score >= 21) return { text: labels.rankDecapoda, class: 'title-decapoda' };
+        if (score > 600) return { text: labels.rankDaCongMing || labels.rankOpenBrawl, class: 'title-da-cong-ming' };
+        if (score >= 300) return { text: labels.rankOpenBrawl, class: 'title-openclaw' };
+        if (score >= 243) return { text: labels.rankHomarus, class: 'title-homarus' };
+        if (score >= 183) return { text: labels.rankNephropidae, class: 'title-nephropidae' };
+        if (score >= 123) return { text: labels.rankPleocyemata, class: 'title-pleocyemata' };
+        if (score >= 63) return { text: labels.rankDecapoda, class: 'title-decapoda' };
         if (score >= 0) return { text: labels.rankMalacostraca, class: 'title-malacostraca' };
         return { text: labels.rankTail, class: 'title-tail' };
     }
@@ -429,7 +429,7 @@
                 '<div class="speech-card" style="margin-bottom:10px;padding:0;overflow:hidden;">' +
                     '<img src="assets/avatar/dealer.webp" alt="dealer" style="display:block;width:100%;height:auto;aspect-ratio:2/1;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" onerror="this.style.display=\'none\'">' +
                     '<div class="speech-content" style="margin:10px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingNoSettlementHeadline || '上一轮结算尚未生成，结果将在本轮投票结束后自动刷新。') + '</div>' +
-                    '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingRuleLine || '下注当前分数的10%，获胜赚一倍。') + '</div>' +
+                    '<div class="speech-content" style="margin:4px 12px 0;color:#f2ddba;text-align:center;">' + escapeHtml(labels.gamblingRuleLine || '猜中总分变为105%，猜错总分变为90%。') + '</div>' +
                     '<div class="speech-content" style="margin:2px 12px 10px;color:#9e9e9e;text-align:center;font-size:0.9em;font-style:italic;">' + escapeHtml(labels.gamblingRuleLine2 || '没获胜?没获胜关我什么事。') + '</div>' +
                 '</div>' +
                 '<div class="speech-content" style="margin-bottom:10px;text-align:center;color:#d8cfbf;">' + escapeHtml(roundHint) + '</div>' +
@@ -475,7 +475,7 @@
             decisionSummary + '，' +
             majorityWord +
             (labels.gamblingHeadlineSuffix || '的玩家居多，你猜对了吗?');
-        const ruleLine = labels.gamblingRuleLine || '下注当前分数的10%，获胜赚一倍。';
+        const ruleLine = labels.gamblingRuleLine || '猜中总分变为105%，猜错总分变为90%。';
         const ruleLine2 = labels.gamblingRuleLine2 || '没获胜?没获胜关我什么事。';
 
         const voteRows = voteSnapshot.votes
@@ -637,19 +637,19 @@
                 tbody.innerHTML = '<tr><td colspan="5" class="board-empty">' + escapeHtml(labels.noPlayers) + '</td></tr>';
             } else {
                 const midScoreRankByScore = buildBandRankMap(players, function (score) {
-                    return score >= 101 && score <= 200;
+                    return score >= 301 && score <= 600;
                 });
                 const lowScoreRankByScore = buildBandRankMap(players, function (score) {
-                    return score <= 100;
+                    return score <= 300;
                 });
                 players.forEach(function (player, index) {
                     const title = getTitleInfo(player.score, labels);
                     let rankText = String(index + 1);
-                    if (player.score > 200) {
+                    if (player.score > 600) {
                         rankText = '?';
-                    } else if (player.score >= 101) {
+                    } else if (player.score >= 301) {
                         rankText = String(midScoreRankByScore[Number(player.score)] || rankText);
-                    } else if (player.score <= 100) {
+                    } else if (player.score <= 300) {
                         rankText = String(lowScoreRankByScore[Number(player.score)] || rankText);
                     }
 

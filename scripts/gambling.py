@@ -270,7 +270,7 @@ def try_record_votes_and_settle_gambling(
             multiplier = 0.9
             won = False
         elif bet_on == majority_action:
-            multiplier = 1.2
+            multiplier = 1.05
             won = True
             winners += 1
         else:

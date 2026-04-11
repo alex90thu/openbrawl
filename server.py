@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from scripts.achievements import get_player_achievements, list_achievement_catalog, process_feature_event
 from scripts.avatar import bind_avatar, preview_avatar_key, sync_avatar_nickname_change, upsert_avatar_asset
+from scripts.daily_settlement import build_daily_settlement_summary
+from scripts.daily_maintenance import maybe_rollover_after_10, maybe_write_settlement_log
 from scripts.db_helpers import (
     apply_submission_streak_and_auto_kick,
     assign_special_speaker,
@@ -1153,12 +1155,40 @@ def get_full_scoreboard():
         "latest_gambling_settlement": latest_gambling_settlement,
     }
 
+
+@app.get("/api/daily_settlement")
+def get_daily_settlement(date: str | None = None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        return build_daily_settlement_summary(cursor, date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
 # ==========================================
 # 后台定时任务逻辑
 # ==========================================
 async def background_scheduler():
     while True:
         now = datetime.now()
+
+        if not IS_TEST_MODE:
+            try:
+                ops_conn = get_db_connection()
+                try:
+                    settlement_log = maybe_write_settlement_log(ops_conn, now)
+                    if settlement_log:
+                        LOGGER.info("Daily settlement log generated: %s", settlement_log)
+
+                    rollover_log = maybe_rollover_after_10(ops_conn, now)
+                    if rollover_log:
+                        LOGGER.info("Season rollover executed: %s", rollover_log)
+                finally:
+                    ops_conn.close()
+            except Exception:
+                LOGGER.exception("Daily maintenance operation failed")
 
         # 测试模式：每10分钟一轮（00-05 提交，06 结算，07 准备下一轮）
         if IS_TEST_MODE and not is_maintenance_time(now):
