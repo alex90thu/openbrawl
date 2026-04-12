@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 
@@ -299,3 +302,73 @@ def build_daily_settlement_summary(cursor, raw_date: str | None = None) -> dict[
             ),
         ],
     }
+
+
+def build_daily_settlement_summary_from_db(db_file: str, raw_date: str | None = None) -> dict[str, Any]:
+    conn = sqlite3.connect(db_file)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        return build_daily_settlement_summary(cursor, raw_date)
+    finally:
+        conn.close()
+
+
+def _load_settlement_logs(log_dir: str = "log/games") -> list[dict[str, Any]]:
+    base = Path(log_dir)
+    if not base.exists() or not base.is_dir():
+        return []
+
+    result: list[dict[str, Any]] = []
+    for path in sorted(base.glob("settlement_*.json"), reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            payload["_log_file"] = str(path)
+            result.append(payload)
+    return result
+
+
+def resolve_settlement_backup_db_from_logs(raw_date: str | None = None, log_dir: str = "log/games") -> tuple[str, str] | None:
+    target_date = None
+    if raw_date:
+        target_date = _parse_target_date(raw_date).strftime("%Y-%m-%d")
+
+    for payload in _load_settlement_logs(log_dir):
+        payload_date = str(payload.get("target_date") or "").strip()
+        if not payload_date:
+            continue
+        if target_date and payload_date != target_date:
+            continue
+
+        source_db = str(payload.get("source_db_backup") or "").strip()
+        if source_db and Path(source_db).exists():
+            return payload_date, source_db
+
+    return None
+
+
+def load_latest_settlement_summary_from_logs(log_dir: str = "log/games") -> dict[str, Any] | None:
+    for payload in _load_settlement_logs(log_dir):
+        target_date = str(payload.get("target_date") or "").strip()
+        sections = payload.get("sections")
+        if not target_date or not isinstance(sections, list):
+            continue
+
+        window = payload.get("window") if isinstance(payload.get("window"), dict) else {}
+        generated_at = str(payload.get("logged_at") or "").strip() or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        return {
+            "summary_date": target_date,
+            "summary_title": f"{target_date} 日结算",
+            "generated_at": generated_at,
+            "window": {
+                "start": str(window.get("start") or ""),
+                "end": str(window.get("end") or ""),
+            },
+            "sections": sections,
+        }
+
+    return None

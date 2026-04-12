@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .daily_settlement import build_daily_settlement_summary
+from .daily_settlement import build_daily_settlement_summary_from_db
 from .runtime import DB_FILE
 
 
@@ -45,6 +45,21 @@ def _mark_done(cursor, op_key: str, payload: dict[str, Any] | None = None) -> No
             json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
         ),
     )
+
+
+def _get_op_payload(cursor, op_key: str) -> dict[str, Any] | None:
+    cursor.execute("SELECT payload_json FROM maintenance_ops WHERE op_key = ?", (op_key,))
+    row = cursor.fetchone()
+    if not row:
+        return None
+    raw = row[0] if not isinstance(row, dict) else row.get("payload_json")
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _load_avatar_map() -> dict[str, dict[str, str]]:
@@ -116,6 +131,43 @@ def _write_json_log(prefix: str, payload: dict[str, Any]) -> str:
     return str(path)
 
 
+def _create_settlement_db_snapshot(now: datetime, target_date: str) -> str | None:
+    source_path = Path(DB_FILE)
+    if not source_path.exists():
+        return None
+
+    RECORD_DIR.mkdir(parents=True, exist_ok=True)
+    backup_name = f"{source_path.name}_{now.strftime('%Y%m%d_%H%M%S')}"
+    backup_path = RECORD_DIR / backup_name
+    shutil.copy2(source_path, backup_path)
+    return str(backup_path)
+
+
+def _latest_settlement_snapshot_meta() -> dict[str, Any] | None:
+    if not LOG_DIR.exists() or not LOG_DIR.is_dir():
+        return None
+
+    for path in sorted(LOG_DIR.glob("settlement_*.json"), reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        target_date = str(payload.get("target_date") or "").strip()
+        source_db = str(payload.get("source_db_backup") or "").strip()
+        if target_date and source_db:
+            return {
+                "target_date": target_date,
+                "source_db_backup": source_db,
+                "settlement_log_file": str(path),
+            }
+
+    return None
+
+
 def maybe_write_settlement_log(conn, now: datetime) -> str | None:
     if not (now.hour == 8 and now.minute < 5):
         return None
@@ -128,18 +180,38 @@ def maybe_write_settlement_log(conn, now: datetime) -> str | None:
     if _is_done(cursor, op_key):
         return None
 
-    summary = build_daily_settlement_summary(cursor, target_date)
+    snapshot_op_key = f"settlement_db_snapshot_{target_date}"
+    source_db_backup = None
+    if _is_done(cursor, snapshot_op_key):
+        snapshot_payload = _get_op_payload(cursor, snapshot_op_key) or {}
+        source_db_backup = str(snapshot_payload.get("backup_file") or "").strip() or None
+
+    if not source_db_backup:
+        source_db_backup = _create_settlement_db_snapshot(now, target_date)
+        if not source_db_backup:
+            return None
+        _mark_done(
+            cursor,
+            snapshot_op_key,
+            {
+                "backup_file": source_db_backup,
+                "target_date": target_date,
+            },
+        )
+
+    summary = build_daily_settlement_summary_from_db(source_db_backup, target_date)
     payload = {
         "event": "daily_settlement",
         "target_date": target_date,
         "logged_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "source_db_backup": source_db_backup,
         "window": summary.get("window", {}),
         "sections": summary.get("sections", []),
         "players": _collect_player_profiles(cursor),
     }
     log_path = _write_json_log("settlement", payload)
 
-    _mark_done(cursor, op_key, {"log_file": log_path})
+    _mark_done(cursor, op_key, {"log_file": log_path, "source_db_backup": source_db_backup})
     conn.commit()
     return log_path
 
@@ -183,6 +255,10 @@ def run_new_game_equivalent(conn, now: datetime) -> str:
         "backup_file": str(backup_path) if backup_path else "",
         "player_count_after_reset": cursor.execute("SELECT COUNT(1) FROM players").fetchone()[0] if "players" in tables else 0,
     }
+    settlement_snapshot = _latest_settlement_snapshot_meta()
+    if settlement_snapshot:
+        log_payload["previous_settlement"] = settlement_snapshot
+
     log_path = _write_json_log("season_reset", log_payload)
     conn.commit()
     return log_path

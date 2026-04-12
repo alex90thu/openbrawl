@@ -13,7 +13,11 @@ from fastapi.responses import JSONResponse
 
 from scripts.achievements import get_player_achievements, list_achievement_catalog, process_feature_event
 from scripts.avatar import bind_avatar, preview_avatar_key, sync_avatar_nickname_change, upsert_avatar_asset
-from scripts.daily_settlement import build_daily_settlement_summary
+from scripts.daily_settlement import (
+    build_daily_settlement_summary_from_db,
+    load_latest_settlement_summary_from_logs,
+    resolve_settlement_backup_db_from_logs,
+)
 from scripts.daily_maintenance import maybe_rollover_after_10, maybe_write_settlement_log
 from scripts.db_helpers import (
     apply_submission_streak_and_auto_kick,
@@ -1158,14 +1162,30 @@ def get_full_scoreboard():
 
 @app.get("/api/daily_settlement")
 def get_daily_settlement(date: str | None = None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    resolved = resolve_settlement_backup_db_from_logs(date)
+    if resolved:
+        resolved_date, backup_db = resolved
+        return build_daily_settlement_summary_from_db(backup_db, resolved_date)
+
+    snapshot = load_latest_settlement_summary_from_logs()
+    if snapshot and (not date or str(snapshot.get("summary_date") or "") == date):
+        return snapshot
+
+    detail = "No settlement backup snapshot found for requested date." if date else "No settlement backup snapshot found yet."
+    raise HTTPException(status_code=404, detail=detail)
+
+
+@app.get("/api/daily_settlement_snapshot")
+def get_daily_settlement_snapshot(date: str | None = None):
+    """Compatibility endpoint that returns settlement log snapshot without recomputation."""
     try:
-        return build_daily_settlement_summary(cursor, date)
+        snapshot = load_latest_settlement_summary_from_logs()
+        if snapshot and (not date or str(snapshot.get("summary_date") or "") == date):
+            return snapshot
+        detail = "No settlement log snapshot found for requested date." if date else "No settlement log snapshot found yet."
+        raise HTTPException(status_code=404, detail=detail)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        conn.close()
 
 # ==========================================
 # 后台定时任务逻辑
